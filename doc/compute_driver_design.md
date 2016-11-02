@@ -2,6 +2,22 @@
 Azure api: 无  
 实现细节: 不用实现.
 
+####2 volume_snapshot_create
+Azure api: Snapshot Blob  
+实现细节: 跟volume快照同样处理.
+
+####3 get_available_resource
+Azure api: 无  
+实现细节: 公有云资源可以视为无限,可以给很大的资源量做为返回.
+
+####4 get_available_nodes
+Azure api: 无  
+实现细节: 对于azure,返回hypervisor_hostname即可.只有一个计算结点.
+
+####5 get_pci_slots_from_xml
+Azure api: 无  
+实现细节: 不用实现.
+
 ####6 spawn
 Azure api: Create or update a VM  
 实现细节: 创建VM过程如下:
@@ -77,3 +93,11 @@ Azure api: 无
 ####22 unpause
 Azure api: 无  
 实现细节: 无法实现.
+
+####23 destroy
+Azure api: Delete a VM  
+实现细节: azure接口文档没说明删除VM后,跟VM相关的资源是否删除,如果没删除,那按照openstack的做法:
+ 
+- 内部网络接口要跟随删除
+- 挂载的磁盘是卸载,不删除.
+- 公网IP解除绑定,不删除
