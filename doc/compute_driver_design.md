@@ -101,3 +101,7 @@ Azure api: Delete a VM
 - 内部网络接口要跟随删除
 - 挂载的磁盘是卸载,不删除.
 - 公网IP解除绑定,不删除
+
+####24 snapshot
+Azure api: Snapshot Blob  
+实现细节: 跟volume快照同样处理.
