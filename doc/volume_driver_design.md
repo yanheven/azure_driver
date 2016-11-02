@@ -70,21 +70,9 @@ Azure api: Copy Blob
 实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
 
 ####18 validate_connector
-Azure api: Start a VM  
-实现细节: 通过映射关系,找到azure上的VM,执行开机操作.
-
-####19 validate_connector
 Azure api:  无  
 实现细节: 检查配置文件读取的azure storage认证连接信息是否正常.
 
-####20 clone_image
+####19 clone_image
 Azure api: Copy Blob  
 实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
-
-####21 pause
-Azure api: 无  
-实现细节: 无法实现,原本接口是让VM进入睡眠状态,VM停止使用CPU,把CPU会话信息保存到内存中,可快速恢复.
-
-####22 unpause
-Azure api: 无  
-实现细节: 无法实现.
