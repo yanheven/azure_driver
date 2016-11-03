@@ -7,21 +7,11 @@
 |Extensions|List extensions|compute driver管理不了,查询DB."Extensions are a deprecated concept in Nova."
 ||Get extension|compute driver管理不了,查询DB
 |Servers|List servers|compute driver管理不了,查询DB
-||Create server|Azure api: Create or update a VM<br/>
-实现细节: 创建VM过程如下:<br/>
-- flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".<br/>
-- image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID. <br/>
-- boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.<br/>
-- key-name: 把相应的keypair的公钥传入到新创建VM.<br/>
-- password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'.<br/>
-- network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定.这些信息只在azure处有,openstack处没有对应的,有个潜在的问题是GUI处显示VM信息时关于网络的超链接就有问题, azure对应位置'network_profile':'network_interfaces':'id'.<br/>
-- security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.<br/>
-- 映射ID:azure支持tags,可以在调用azure接口创建VM时把openstack这边的VM ID写入到azure那边的tags里面.
+||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.(但其中有一步是调用openstack network api,那么应该是没有azure的网络信息,有待处理.另外其他API也有同样情况,要调用网络API.)  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.  8 映射ID:azure支持tags,可以在调用azure接口创建VM时把openstack这边的VM ID写入到azure那边的tags里面.
 ||List details for servers|compute driver管理不了,查询DB
 ||Get server details|compute driver管理不了,查询DB
 ||Update server|compute driver管理不了,更新DB记录
-||Delete server|Azure api: Delete a VM<br/>
-实现细节: azure接口文档没说明删除VM后,跟VM相关的资源是否删除,如果没删除,那按照openstack的做法,对网络接口,系统磁盘进行删除操作.
+||Delete server|Azure api: Delete a VM  实现细节: azure接口文档没说明删除VM后,跟VM相关的资源是否删除,如果没删除,那按照openstack的做法,对网络接口,系统磁盘进行删除操作.
 |Server metadata|Show server metadata|compute driver管理不了,查询DB
 ||Create or replace server metadata items|compute driver管理不了,查询DB
 ||Update server metadata items|azure更新VM只有Create or update a VM这个接口,没看到可以更新metadata
@@ -30,17 +20,13 @@
 ||Delete server metadata item|azure更新VM只有Create or update a VM这个接口,没看到可以更新metadata
 |Server addresses|List addresses|compute driver管理不了,查询DB
 ||List addresses by network|compute driver管理不了,查询DB
-|Server actions|Change password|Azure api: Create or update a VM<br/>
-实现细节: 有密码复杂度要求,实现时查看azure文档做检查,复杂度不通过返回错误提示.
-||Reboot server|Azure api: Restart a VM<br/>
-实现细节: 无
+|Server actions|Change password|Azure api: Create or update a VM  实现细节: 有密码复杂度要求,实现时查看azure文档做检查,复杂度不通过返回错误提示.
+||Reboot server|Azure api: Restart a VM  实现细节: 无
 ||Rebuild server|不支持
-||Resize server|Azure api: Create or update a VM<br/>
-实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
+||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
 ||Confirm resized server|不支持
 ||Revert resized server|不支持
-||Create image|Azure api: Copy Blob<br/>
-实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
+||Create image|Azure api: Copy Blob  实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
 |Flavors|List flavors|compute driver管理不了,查询DB
 ||List details for flavors|compute driver管理不了,查询DB
 ||Get flavor details|compute driver管理不了,查询DB
@@ -69,21 +55,16 @@
 ||List extended status for servers|compute driver管理不了,查询DB
 |Servers with IP type (servers)|Show IP type|不明白对应哪个NOVA API接口
 ||List servers with IP type|不明白对应哪个NOVA API接口
-|Servers multiple create (servers)|Create multiple servers|Azure api: Create or update a VM<br/>
-实现细节: 多次创建VM,检查要创建VM的指定资源是否是唯一的,比如指定某个IP,某个磁盘等,是不允许的.
-|Servers deferred delete (servers, action)|Force delete server|Azure api: Delete a VM<br/>
-实现细节: azure的删除本身就是强制的.
-||Restore server|Azure api: DStop and deallocate a virtual machine和Start a VM<br/>
-实现细节: azure支持不占用计算资源的关机,不收费,需要时可以恢复使用.但这些资源要有机制进行定期回收,不然会变成垃圾资源.
+|Servers multiple create (servers)|Create multiple servers|Azure api: Create or update a VM  实现细节: 多次创建VM,检查要创建VM的指定资源是否是唯一的,比如指定某个IP,某个磁盘等,是不允许的.
+|Servers deferred delete (servers, action)|Force delete server|Azure api: Delete a VM  实现细节: azure的删除本身就是强制的.
+||Restore server|Azure api: DStop and deallocate a virtual machine和Start a VM  实现细节: azure支持不占用计算资源的关机,不收费,需要时可以恢复使用.但这些资源要有机制进行定期回收,不然会变成垃圾资源.
 |Servers rescue and unrescue (servers, action)|Rescue server|不支持
 ||Unrescue server|不支持
 |Servers shelve (servers, action)|Shelve server|不支持
 ||Remove a shelved instance|不支持
 ||Restore shelved server|不支持
-|Servers start and stop (servers, action)|Start server|Azure api: Start a VM<br/>
-实现细节: 通过映射关系,找到azure上的VM,执行开机操作.
-||Stop server|Azure api: Stop a VM<br/>
-实现细节: 通过映射关系,找到azure上的VM,执行关闭操作.
+|Servers start and stop (servers, action)|Start server|Azure api: Start a VM  实现细节: 通过映射关系,找到azure上的VM,执行开机操作.
+||Stop server|Azure api: Stop a VM  实现细节: 通过映射关系,找到azure上的VM,执行关闭操作.
 |Servers diagnostics (servers, diagnostics)|Get server diagnostics|azure支持创建VM时,指定storage account的uri,会把启动时的console输出/屏幕截图存储,把这个uri存储在VM属性里面.
 |Servers and images with disk config (servers, images)|Create server|不明白对应哪个NOVA API接口
 ||Show server information|不明白对应哪个NOVA API接口
@@ -98,20 +79,14 @@
 ||List availability zones with details|不支持
 ||Show availability zone information|不支持
 |Servers password (servers, os-server-password)|Get server password|compute driver管理不了,查询DB
-||Clear server password|Azure api: Create or update a VM<br/>
-实现细节: 更新VM信息时,"osProfile"里有"adminPassword"留空.
+||Clear server password|Azure api: Create or update a VM  实现细节: 更新VM信息时,"osProfile"里有"adminPassword"留空.
 |Servers virtual interfaces (servers, os-virtual-interfaces)|List virtual interfaces|compute driver管理不了,查询DB
 ||Show virtual interface and attached network|不明白对应哪个NOVA API接口
-|Servers with volume attachments (servers, os-volume_attachments)|Attach volume|Azure api: Create or update a VM<br/>
-实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'.需要提前创建好.
+|Servers with volume attachments (servers, os-volume_attachments)|Attach volume|Azure api: Create or update a VM  实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'.需要提前创建好.
 ||List volume attachments|compute driver管理不了,查询DB
 ||Show volume attachment details|compute driver管理不了,查询DB
-||Detach volume|Azure api:  Create or update a VM<br/>
-实现细节: 更新VM信息时减少要卸载的volume的blob uri.'data_disk'.
-|Server boot from volume (os-volumes_boot)|Create server|Azure api: Create or update a VM<br/>
-实现细节: 与普通创建VM基本相同,除了下面这点<br/>
-- boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.<br/>
-|Flavors create and delete (flavors)|Create flavor|compute driver管理不了
+||Detach volume|Azure api:  Create or update a VM  实现细节: 更新VM信息时减少要卸载的volume的blob uri.'data_disk'.
+|Server boot from volume (os-volumes_boot)|Create server|Azure api: Create or update a VM  实现细节: 与普通创建VM基本相同,除了下面这点  - boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  |Flavors create and delete (flavors)|Create flavor|compute driver管理不了
 ||Delete flavor|compute driver管理不了
 |Flavors with disabled attribute (flavors)|Get flavor disabled status details|compute driver管理不了
 ||List flavors with flavor disabled status|compute driver管理不了
@@ -136,9 +111,7 @@
 ||Create flavor extra specs|compute driver管理不了
 |Limits with project usage (limits)|Get limits|compute driver管理不了,但可以查看azure里面的limit,进行配置.
 |Limits with project usage for administrators (limits)|Get customer limits|compute driver管理不了,但可以查看azure里面的limit,进行配置.
-|Attach interfaces (os-interface)|Create interface|实现不了,因为这个过程会调用网络APIself.network_api.deallocate_port_for_instance,如果网络没对接azure,实现不了.<br/>
-Azure api: Create or update a VM<br/>
-实现细节: 更新VM信息时增加某个网络接口的信息.'network_profile':'network_interfaces':'id',需要提前创建好.
+|Attach interfaces (os-interface)|Create interface|实现不了,因为这个过程会调用网络APIself.network_api.deallocate_port_for_instance,如果网络没对接azure,实现不了.  Azure api: Create or update a VM  实现细节: 更新VM信息时增加某个网络接口的信息.'network_profile':'network_interfaces':'id',需要提前创建好.
 ||List interfaces|实现不了,因为这个过程会调用网络API,如果网络没对接azure,实现不了.
 ||Show attached interface information|实现不了,因为这个过程会调用网络APIself.network_api.deallocate_port_for_instance,如果网络没对接azure,实现不了.
 ||Detach interface|实现不了,因为这个过程会调用网络APIself.network_api.deallocate_port_for_instance,如果网络没对接azure,实现不了.
@@ -165,8 +138,7 @@ Azure api: Create or update a VM<br/>
 ||Inject network information|实现不了,因为这个过程会调用网络API:self.network_api.get_instance_nw_info ,如果网络没对接azure,实现不了.
 ||Lock server|azure不支持
 ||Unlock server|azure不支持
-||Create server backup|Azure api: Snapshot Blob<br/>
-实现细节: 要把azure blob信息添加到volume,放到provider_id.
+||Create server backup|Azure api: Snapshot Blob  实现细节: 要把azure blob信息添加到volume,放到provider_id.
 ||Reset server state|compute driver管理不了更新DB操作
 ||Add floating IP address|实现不了,因为这个过程会调用网络API:self.network_api.allocate_floating_ip和self.network_api.get_floating_ip_by_address,如果网络没对接azure,实现不了.
 
@@ -181,26 +153,21 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 ||Show API version details|volume driver管理不了,发行软件时指定
 |API extensions (extensions)|List API extensions|volume driver管理不了,查询DB
 |Limits (limits)|Show absolute limits|volume driver管理不了,查询DB,但可以查看azure里面的limit,进行配置.
-|Volumes (volumes)|Create volume|Azure api: Put Page<br/>
-实现细节: 指定要创建的卷的大小,512byte的倍数,最大1TB.没有ID,只能通过container_name和blob_name来对卷进行定位.所以要把azure卷信息添加到volume,目前看到可以放到provider_id.
+|Volumes (volumes)|Create volume|Azure api: Put Page  实现细节: 指定要创建的卷的大小,512byte的倍数,最大1TB.没有ID,只能通过container_name和blob_name来对卷进行定位.所以要把azure卷信息添加到volume,目前看到可以放到provider_id.
 ||List volumes||volume driver管理不了,查询DB
 ||List volumes (detailed)|volume driver管理不了,查询DB
 ||Show volume information|volume driver管理不了,查询DB
 ||Update volume|volume driver管理不了,更新DB操作
-||Delete volume|Azure api: Put Page<br/>
-实现细节: 通过映射关系,找到azure上某个快照的blob,执行删除操作.
+||Delete volume|Azure api: Put Page  实现细节: 通过映射关系,找到azure上某个快照的blob,执行删除操作.
 |Volume actions (volumes, action)|Reset volume statuses|volume driver管理不了,更新DB操作
 ||Set image metadata for volume|volume driver管理不了,更新DB操作:self.db.volume_metadata_update
 ||Remove image metadata from volume|volume driver管理不了,更新DB操作:self.db.volume_metadata_delete
-||Attach volume|Azure api: Create or update a VM<br/>
-实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'.需要提前创建好.
-|Backups (backups)|Create backup|Azure api: Copy Blob<br/>
-实现细节: 要把azure blob信息添加到volume,放到provider_id.
+||Attach volume|Azure api: Create or update a VM  实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'.需要提前创建好.
+|Backups (backups)|Create backup|Azure api: Copy Blob  实现细节: 要把azure blob信息添加到volume,放到provider_id.
 ||List backups|volume driver管理不了,查询DB
 ||List backups (detailed)|volume driver管理不了,查询DB
 ||Show backup details|volume driver管理不了,查询DB
-||Delete backup|Azure api: Put Page<br/>
-实现细节: 通过映射关系,找到azure上的blob,执行删除操作.
+||Delete backup|Azure api: Put Page  实现细节: 通过映射关系,找到azure上的blob,执行删除操作.
 ||Restore backup|azure原生不支持,但可以通过更新在openstack处的要恢复的卷所映射的azure的uri为备份的uri,达到恢复备份的目的.
 |Backup actions (backups, action)|Force-delete backup|跟删除volume一样处理.
 |Quota sets extension (os-quota-sets)|Show quotas|volume driver管理不了,查询DB
@@ -217,14 +184,12 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 ||Update extra specs for a volume type|volume driver管理不了,更新DB
 ||Show volume type information|volume driver管理不了,查询DB
 ||Delete volume type|volume driver管理不了,更新DB
-|Volume snapshots (snapshots)|Create snapshot|Azure api: Copy Blob<br/>
-实现细节: 跟从一个现有volume复制一个新的一样处理.要把azure blob信息添加到volume,放到provider_id.
+|Volume snapshots (snapshots)|Create snapshot|Azure api: Copy Blob  实现细节: 跟从一个现有volume复制一个新的一样处理.要把azure blob信息添加到volume,放到provider_id.
 ||List snapshots|volume driver管理不了,查询DB
 ||List snapshots (detailed)|volume driver管理不了,查询DB
 ||Show snapshot information|volume driver管理不了,查询DB
 ||Update snapshot|volume driver管理不了,更新DB
-||Delete snapshot|Azure api: Put Page<br/>
-实现细节: 跟删除卷一样处理.通过映射关系,找到azure上某个快照的blob,执行删除操作.
+||Delete snapshot|Azure api: Put Page  实现细节: 跟删除卷一样处理.通过映射关系,找到azure上某个快照的blob,执行删除操作.
 ||Show snapshot metadata|volume driver管理不了,查询DB
 ||Update snapshot metadata|volume driver管理不了,更新DB
 |Volume image metadata extension (os-vol-image-meta)|Show image metadata for volume|volume driver管理不了,查询DB
