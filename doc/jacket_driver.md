@@ -147,8 +147,8 @@
 ####说明
 OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创建VM时指定的操作系统盘,额外挂载的数据盘,存储镜像,从VM导出的镜像,快照都是它.
 
-|Category|API
-|:--|:--
+|Category|API|Azure
+|:--|:--|:--
 |API versions|List API versions|volume driver管理不了,发行软件时指定
 ||Show API version details|volume driver管理不了,发行软件时指定
 |API extensions (extensions)|List API extensions|volume driver管理不了,查询DB
