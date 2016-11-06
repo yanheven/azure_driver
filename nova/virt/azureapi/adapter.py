@@ -39,8 +39,8 @@ compute_opts = [
                help='Auzre Virtual Network Name'),
     cfg.StrOpt('vsubnet_id',
                help='Auzre Virtual Subnte ID'),
-    cfg.StrOpt('password',
-               help='Auzre password of user of subscription'),
+    cfg.StrOpt('vsubnet_name',
+               help='Auzre Virtual Subnte Name'),
 ]
 
 CONF.register_opts(compute_opts, 'azure')
