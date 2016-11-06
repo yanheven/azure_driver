@@ -23,12 +23,13 @@ compute_opts = [
                default='westus',
                help='Azure Datacenter Location'),
     cfg.StrOpt('resource_group',
-               default='openstack_resource_group',
+               default='ops_resource_group',
                help='Azure Resource Group Name'),
     cfg.StrOpt('storage_account',
-               default='openstack_storage_account',
-               help='Azure Storage Account Name, '
-                    'should be unique in Azure'),
+               default='ops0storage0account',
+               help="""Azure Storage Account Name, should be unique in Azure,
+    Storage account name must be between 3 and 24 characters in length
+    and use numbers and lower-case letters only."""),
     cfg.StrOpt('subscription_id',
                help='Azure subscription ID'),
     cfg.StrOpt('username',
@@ -53,6 +54,7 @@ class Azure(object):
 
         credentials = UserPassCredentials(CONF.azure.username,
                                           CONF.azure.password)
+        LOG.debug('Longin with Azure username and password.')
         self.resource = ResourceManagementClient(credentials,
                                                  CONF.azure.subscription_id)
         self.compute = ComputeManagementClient(credentials,
@@ -61,3 +63,4 @@ class Azure(object):
                                                CONF.azure.subscription_id)
         self.network = NetworkManagementClient(credentials,
                                                CONF.azure.subscription_id)
+        LOG.debug('Azure Management Clients Got')

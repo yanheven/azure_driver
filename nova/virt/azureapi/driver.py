@@ -8,6 +8,7 @@ Driver base-classes:
 
 import sys
 import uuid
+import json
 
 from oslo_log import log as logging
 from oslo_utils import importutils
@@ -21,6 +22,11 @@ from nova.virt import driver
 from nova.virt.azureapi.adapter import Azure
 from nova.virt.azureapi import constant
 from nova.virt.azureapi import exception
+from nova.compute import power_state
+from nova.virt.hardware import InstanceInfo
+from nova.compute import arch
+from nova.compute import hv_type
+from nova.compute import vm_mode
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -32,12 +38,10 @@ LIMIT = {
     'vcpus_used': 0,
     'memory_mb_used': 0,
     'local_gb_used': 0,
-    'hypervisor_type': 'Azure',
-    'hypervisor_version': '1.0',
-    'hypervisor_hostname': CONF.host,
-    'cpu_info': {},
-    'disk_available_least': 500000000000,
+    'cpu_info': 'azure_basic',
+    'numa_topology': None
 }
+
 
 class AzureDriver(driver.ComputeDriver):
     capabilities = {
@@ -60,36 +64,49 @@ class AzureDriver(driver.ComputeDriver):
         """Pre Create Network info in Azure.
         """
         # Creaet Network
-        async_vnet_creation = self.network.virtual_networks.create_or_update(
+        # Create Subnet
+        net_info = self.network.virtual_networks.get(
             CONF.azure.resource_group,
-            CONF.azure.vnet_name,
-            {
-                'location': CONF.azure.location,
-                'address_space': {
-                    'address_prefixes': ['10.0.0.0/16']
+            CONF.azure.vnet_name)
+        LOG.debug('#####Get vnet info:{}'.format(net_info))
+        if not net_info:
+            async_vnet_creation = self.network.virtual_networks.create_or_update(
+                CONF.azure.resource_group,
+                CONF.azure.vnet_name,
+                {
+                    'location': CONF.azure.location,
+                    'address_space': {
+                        'address_prefixes': ['10.0.0.0/16']
+                    }
                 }
-            }
-        )
-        async_vnet_creation.wait()
-        LOG.debug("Create/Update Network")
+            )
+            async_vnet_creation.wait()
+            LOG.debug("Create Network")
 
         # Create Subnet
-        async_subnet_creation = self.network.subnets.create_or_update(
+        subnet_info = self.network.subnets.get(
             CONF.azure.resource_group,
             CONF.azure.vnet_name,
-            CONF.azure.vsubnet_name,
-            {'address_prefix': '10.0.0.0/16'}
-        )
-        subnet_info = async_subnet_creation.result()
+            CONF.azure.vsubnet_name,)
+        LOG.debug('#####Get subnet info:{}'.format(subnet_info))
+        if not subnet_info:
+            # subnet can't recreate, check existing before create.
+            async_subnet_creation = self.network.subnets.create_or_update(
+                CONF.azure.resource_group,
+                CONF.azure.vnet_name,
+                CONF.azure.vsubnet_name,
+                {'address_prefix': '10.0.0.0/16'}
+            )
+            subnet_info = async_subnet_creation.result()
         CONF.set_override('vsubnet_id', subnet_info.id, 'azure')
-        LOG.debug("Create/Update Subnet:{}".format(subnet_info.id))
+        LOG.debug("Create/Update Subnet:{}".format(CONF.azure.vsubnet_id))
 
     def init_host(self, host):
-        self.network.providers.register('Microsoft.Network')
+        self.resource.providers.register('Microsoft.Network')
         LOG.debug("Register Microsoft.Network")
-        self.compute.providers.register('Microsoft.Compute')
+        self.resource.providers.register('Microsoft.Compute')
         LOG.debug("Register Microsoft.Compute")
-        self.storage.providers.register('Microsoft.Storage')
+        self.resource.providers.register('Microsoft.Storage')
         LOG.debug("Register Microsoft.Storage")
 
         self.resource.resource_groups.create_or_update(
@@ -107,22 +124,90 @@ class AzureDriver(driver.ComputeDriver):
         storage_async_operation.wait()
         LOG.debug("Create/Update Storage Account")
 
+        self._precreate_network()
+        LOG.debug("Create/Update Ntwork and Subnet, Done.")
+
+    def get_available_nodes(self, refresh=False):
+        return 'azure-{}'.format(CONF.azure.location)
+
+    def list_instances(self):
+        """Return the names of all the instances known to the virtualization
+        layer, as a list.
+        """
+        instances = []
+        pages = self.compute.virtual_machines.list(CONF.azure.resource_group)
+        for i in pages:
+            instances.append(i)
+        return instances
+
+    def list_instance_uuids(self):
+        """Return the UUIDS of all the instances known to the virtualization
+        layer, as a list. azure vm.name is vm.uuid in openstack.
+        """
+        uuids = []
+        instances = self.list_instances()
+        for i in instances:
+            uuids.append(i.name)
+        return uuids
+
     def get_info(self, instance):
-        """Get the current status of an instance, by name (not ID!)
+        """Get the current status of an instance
 
         :param instance: nova.objects.instance.Instance object
 
         Returns a InstanceInfo object
         """
-        # TODO(Vek): Need to pass context in for access to auth_token
-        raise NotImplementedError()
+        instance_id = instance.uuid
+        LOG.debug('Virtual Machine id is {}'.format(instance_id))
+
+        vm = self.compute.virtual_machines.get(
+            CONF.azure.resource_group, instance_id)
+        LOG.debug('vm info is: {}'.format(vm))
+
+        state = power_state.NOSTATE
+
+        # TODO
+        return InstanceInfo(
+            state=state,
+            max_mem_kb=2048,
+            mem_kb=1024,
+            num_cpu=2,
+            cpu_time_ns=0,
+            id=instance_id)
+
+    def get_available_resource(self, nodename):
+        """Retrieve resource information.
+
+        This method is called when nova-compute launches, and
+        as part of a periodic task that records the results in the DB.
+
+        :param nodename: unused in this driver
+        :returns: dictionary containing resource info
+        "vcpus", "memory_mb", "local_gb", "cpu_info","vcpus_used",
+        "memory_mb_used", "local_gb_used","numa_topology"
+        """
+        return {'vcpus': 10000,
+                'memory_mb': 100000000,
+                'local_gb': 100000000,
+                'vcpus_used': 0,
+                'memory_mb_used': 1000,
+                'local_gb_used': 1000,
+                'hypervisor_type': 'aws',
+                'hypervisor_version': 5005000,
+                'hypervisor_hostname': nodename,
+                'cpu_info': '{"model": ["Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz"], \
+                "topology": {"cores": 16, "threads": 32}}',
+                'supported_instances':[(arch.I686, hv_type.HYPERV, vm_mode.HVM),
+                    (arch.X86_64, hv_type.HYPERV, vm_mode.HVM)],
+                'numa_topology': None
+                }
 
     def _create_nic(self, instance_uuid):
         """Create a Network Interface for a VM.
         """
         async_nic_creation = self.network.network_interfaces.create_or_update(
             CONF.azure.resource_group,
-            CONF.azure.vnet_name,
+            instance_uuid,
             {
                 'location': CONF.azure.location,
                 'ip_configurations': [{
@@ -133,9 +218,9 @@ class AzureDriver(driver.ComputeDriver):
                 }]
             }
         )
-        nic_id = async_nic_creation.result()
-        LOG.debug("Create a Nic:{}".format(nic_id))
-        return nic_id
+        nic = async_nic_creation.result()
+        LOG.debug("Create a Nic:{}".format(nic.id))
+        return nic.id
 
     def _get_image_from_mapping(self, image_meta):
         image_name = image_meta.name
@@ -193,7 +278,7 @@ class AzureDriver(driver.ComputeDriver):
               admin_password, network_info=None, block_device_info=None):
         instance_uuid = instance.uuid
         image_reference = self._get_image_from_mapping(image_meta) or None
-        vm_size = self._get_image_from_mapping(instance) or None
+        vm_size = self._get_instance_size(instance) or None
         nic_id = self._create_nic(instance_uuid)
         vm_parameters = self._create_vm_parameters(
             instance_uuid, image_reference, vm_size, nic_id, admin_password)
@@ -219,6 +304,25 @@ class AzureDriver(driver.ComputeDriver):
         # timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
         # timer.start(interval=0.5).wait()
 
+    def cleanup(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True, migrate_data=None, destroy_vifs=True):
+        """Cleanup the instance resources .
+
+        Instance should have been destroyed from the Hypervisor before calling
+        this method.
+
+        :param context: security context
+        :param instance: Instance object as returned by DB layer.
+        :param network_info: instance network information
+        :param block_device_info: Information about block devices that should
+                                  be detached from the instance.
+        :param destroy_disks: Indicates if disks should be destroyed
+        :param migrate_data: implementation specific params
+        """
+        # clean vhd
+        # clean nic
+        pass
+
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
         """Destroy the specified instance from the Hypervisor.
@@ -235,7 +339,13 @@ class AzureDriver(driver.ComputeDriver):
         :param destroy_disks: Indicates if disks should be destroyed
         :param migrate_data: implementation specific params
         """
-        raise NotImplementedError()
+        LOG.debug("Calling Delete Instance in Azure ...", instance=instance)
+        result = self.compute.virtual_machines.delete(
+            CONF.azure.resource_group, instance.uuid)
+        result.wait()
+        LOG.debug("Delete Instance in Azure Called.", instance=instance)
+        self.cleanup(context, instance, network_info, block_device_info,
+                     destroy_disks, migrate_data)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
