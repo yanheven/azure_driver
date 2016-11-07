@@ -149,6 +149,7 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 
 - 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB.
 - VM挂载磁盘必须是以vhd结尾的page blob.
+- Azure doesn't support create .vhd page blob, copy from existing .vhd(take a 1GB base .vhd), then resize.
 
 |Category|API|Azure
 |:--|:--|:--
@@ -156,7 +157,7 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 ||Show API version details|volume driver管理不了,发行软件时指定
 |API extensions (extensions)|List API extensions|volume driver管理不了,查询DB
 |Limits (limits)|Show absolute limits|volume driver管理不了,查询DB,但可以查看azure里面的limit,进行配置.
-|Volumes (volumes)|Create volume|Azure api: Put Page  实现细节: 指定要创建的卷的大小,512byte的倍数,最大1TB.没有ID,只能通过container_name和blob_name来对卷进行定位.所以要把azure卷信息添加到volume,目前看到可以放到provider_id.
+|Volumes (volumes)|Create volume|Azure api: Copy Blob & Put Page  实现细节: copy new .vhd page blob from base .vhd, then resize it,只能通过container_name和blob_name来对卷进行定位.
 ||List volumes||volume driver管理不了,查询DB
 ||List volumes (detailed)|volume driver管理不了,查询DB
 ||Show volume information|volume driver管理不了,查询DB
