@@ -18,7 +18,7 @@ compute_driver=nova.virt.azureapi.AzureDriver
 [azure]
 location = westus
 resource_group = ops_resource_group
-storage_account = ops_storage_account
+storage_account = ops0storage0account
 subscription_id = 62257576-b9df-484a-b643-2df9ce9e7086
 username = xxxxxxxxxx@yanhevenoutlook.onmicrosoft.com
 password = xxxxxxxxx
