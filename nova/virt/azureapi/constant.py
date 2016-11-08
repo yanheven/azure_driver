@@ -38,6 +38,8 @@ vm size in azure:
 {'name': u'Basic_A2', 'number_of_cores': 2, 'resource_disk_size_in_mb': 61440, 'memory_in_mb': 3584, 'max_data_disk_count': 4, 'os_disk_size_in_mb': 1047552}
 {'name': u'Basic_A3', 'number_of_cores': 4, 'resource_disk_size_in_mb': 122880, 'memory_in_mb': 7168, 'max_data_disk_count': 8, 'os_disk_size_in_mb': 1047552}
 {'name': u'Basic_A4', 'number_of_cores': 8, 'resource_disk_size_in_mb': 245760, 'memory_in_mb': 14336, 'max_data_disk_count': 16, 'os_disk_size_in_mb': 1047552}
+
+if mapping to other flavor family in azure, need to change "usage_family" in "get_available_resource" method.
 """
 FLAVOR_MAPPING = {
     'm1.tiny': 'Basic_A0',
