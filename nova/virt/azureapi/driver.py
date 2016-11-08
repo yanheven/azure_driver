@@ -31,17 +31,6 @@ from nova.compute import vm_mode
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
-LIMIT = {
-    'vcpus': 100,
-    'memory_mb': 88192,
-    'local_gb': 500,
-    'vcpus_used': 0,
-    'memory_mb_used': 0,
-    'local_gb_used': 0,
-    'cpu_info': 'azure_basic',
-    'numa_topology': None
-}
-
 
 class AzureDriver(driver.ComputeDriver):
     capabilities = {
@@ -68,7 +57,6 @@ class AzureDriver(driver.ComputeDriver):
         net_info = self.network.virtual_networks.get(
             CONF.azure.resource_group,
             CONF.azure.vnet_name)
-        LOG.debug('#####Get vnet info:{}'.format(net_info))
         if not net_info:
             async_vnet_creation = self.network.virtual_networks.create_or_update(
                 CONF.azure.resource_group,
@@ -88,7 +76,6 @@ class AzureDriver(driver.ComputeDriver):
             CONF.azure.resource_group,
             CONF.azure.vnet_name,
             CONF.azure.vsubnet_name,)
-        LOG.debug('#####Get subnet info:{}'.format(subnet_info))
         if not subnet_info:
             # subnet can't recreate, check existing before create.
             async_subnet_creation = self.network.subnets.create_or_update(
@@ -239,29 +226,33 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Get size mapping:{}".format(vm_size))
         return vm_size
 
-    def _create_vm_parameters(self, instance_uuid, image_reference, vm_size,
+    def _create_vm_parameters(self, instance, image_reference, vm_size,
                               nic_id, admin_password):
         """Create the VM parameters structure.
         """
+        if instance.os_type == "windows":
+            user = "Administrator"
+        else:
+            user = "root"
         vm_parameters = {
             'location': CONF.azure.location,
             'os_profile': {
-                'computer_name': instance_uuid,
-                'admin_username': 'azureadmin',
+                'computer_name': instance.uuid,
+                'admin_username': user,
                 'admin_password': admin_password
             },
             'hardware_profile': {
-                'vm_size': 'Standard_DS1'
+                'vm_size': vm_size
             },
             'storage_profile': {
                 'image_reference': image_reference,
                 'os_disk': {
-                    'name': instance_uuid,
+                    'name': instance.uuid,
                     'caching': 'None',
                     'create_option': 'fromImage',
                     'vhd': {
                         'uri': 'https://{}.blob.core.windows.net/vhds/{}.vhd'.format(
-                            CONF.azure.storage_account, instance_uuid)
+                            CONF.azure.storage_account, instance.uuid)
                     }
                 },
             },
@@ -281,7 +272,7 @@ class AzureDriver(driver.ComputeDriver):
         vm_size = self._get_instance_size(instance) or None
         nic_id = self._create_nic(instance_uuid)
         vm_parameters = self._create_vm_parameters(
-            instance_uuid, image_reference, vm_size, nic_id, admin_password)
+            instance, image_reference, vm_size, nic_id, admin_password)
 
         async_vm_creation = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance_uuid, vm_parameters)
@@ -290,38 +281,18 @@ class AzureDriver(driver.ComputeDriver):
 
         async_vm_creation.wait()
 
-        LOG.debug("Create Instance in Azure Called.", instance=instance)
-
-        # def _wait_for_boot():
-        #     """Called at an interval until the VM is running."""
-        #     state = self.get_info(instance).state
-        #
-        #     if state == power_state.RUNNING:
-        #         LOG.info(_LI("Instance spawned successfully."),
-        #                  instance=instance)
-        #         raise loopingcall.LoopingCallDone()
-        #
-        # timer = loopingcall.FixedIntervalLoopingCall(_wait_for_boot)
-        # timer.start(interval=0.5).wait()
+        LOG.debug("Create Instance in Azure Finish.", instance=instance)
 
     def cleanup(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None, destroy_vifs=True):
-        """Cleanup the instance resources .
+        # 1 clean vhd
+        # TODO.call volume delete api to delete os disk
 
-        Instance should have been destroyed from the Hypervisor before calling
-        this method.
-
-        :param context: security context
-        :param instance: Instance object as returned by DB layer.
-        :param network_info: instance network information
-        :param block_device_info: Information about block devices that should
-                                  be detached from the instance.
-        :param destroy_disks: Indicates if disks should be destroyed
-        :param migrate_data: implementation specific params
-        """
-        # clean vhd
-        # clean nic
-        pass
+        # 2 clean nic
+        self.network.network_interfaces.delete(
+            CONF.azure.resource_group, instance.uuid
+        )
+        LOG.debug("Delete instance's Interface", instance=instance)
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
@@ -343,28 +314,18 @@ class AzureDriver(driver.ComputeDriver):
         result = self.compute.virtual_machines.delete(
             CONF.azure.resource_group, instance.uuid)
         result.wait()
-        LOG.debug("Delete Instance in Azure Called.", instance=instance)
+        LOG.debug("Delete Instance in Azure Finish.", instance=instance)
         self.cleanup(context, instance, network_info, block_device_info,
                      destroy_disks, migrate_data)
+        LOG.info("Delete and Clean Up Instance in Azure Finish.",
+                 instance=instance)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        """Reboot the specified instance.
-
-        After this is called successfully, the instance's state
-        goes back to power_state.RUNNING. The virtualization
-        platform should ensure that the reboot action has completed
-        successfully even in cases in which the underlying domain/vm
-        is paused or halted/stopped.
-
-        :param instance: nova.objects.instance.Instance
-        :param network_info: instance network information
-        :param reboot_type: Either a HARD or SOFT reboot
-        :param block_device_info: Info pertaining to attached volumes
-        :param bad_volumes_callback: Function to handle any bad volumes
-            encountered
-        """
-        raise NotImplementedError()
+        # TODO check status before reboot
+        self.compute.virtual_machines.restart(
+            CONF.azure.resource_group, instance.uuid)
+        LOG.debug("Restart Instance in Azure Finish.", instance=instance)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
@@ -376,70 +337,15 @@ class AzureDriver(driver.ComputeDriver):
         """Detach the disk attached to the instance."""
         raise NotImplementedError()
 
-    def attach_interface(self, instance, image_meta, vif):
-        """Use hotplug to add a network interface to a running instance.
-
-        The counter action to this is :func:`detach_interface`.
-
-        :param nova.objects.instance.Instance instance:
-            The instance which will get an additional network interface.
-        :param nova.objects.ImageMeta image_meta:
-            The metadata of the image of the instance.
-        :param nova.network.model.NetworkInfo vif:
-            The object which has the information about the interface to attach.
-
-        :raise nova.exception.NovaException: If the attach fails.
-
-        :return: None
-        """
-        raise NotImplementedError()
-
-    def detach_interface(self, instance, vif):
-        """Use hotunplug to remove a network interface from a running instance.
-
-        The counter action to this is :func:`attach_interface`.
-
-        :param nova.objects.instance.Instance instance:
-            The instance which gets a network interface removed.
-        :param nova.network.model.NetworkInfo vif:
-            The object which has the information about the interface to detach.
-
-        :raise nova.exception.NovaException: If the detach fails.
-
-        :return: None
-        """
-        raise NotImplementedError()
-
-    def snapshot(self, context, instance, image_id, update_task_state):
-        """Snapshots the specified instance.
-
-        :param context: security context
-        :param instance: nova.objects.instance.Instance
-        :param image_id: Reference to a pre-created image that will
-                         hold the snapshot.
-        :param update_task_state: Callback function to update the task_state
-            on the instance while the snapshot operation progresses. The
-            function takes a task_state argument and an optional
-            expected_task_state kwarg which defaults to
-            nova.compute.task_states.IMAGE_SNAPSHOT. See
-            nova.objects.instance.Instance.save for expected_task_state usage.
-        """
-        raise NotImplementedError()
-
     def power_off(self, instance, timeout=0, retry_interval=0):
-        """Power off the specified instance.
-
-        :param instance: nova.objects.instance.Instance
-        :param timeout: time to wait for GuestOS to shutdown
-        :param retry_interval: How often to signal guest while
-                               waiting for it to shutdown
-        """
-        raise NotImplementedError()
+        # TODO check status before power_off
+        self.compute.virtual_machines.power_off(
+            CONF.azure.resource_group, instance.uuid)
+        LOG.debug("Power off Instance in Azure Finish.", instance=instance)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
-        """Power on the specified instance.
-
-        :param instance: nova.objects.instance.Instance
-        """
-        raise NotImplementedError()
+        # TODO check status before start
+        self.compute.virtual_machines.start(
+            CONF.azure.resource_group, instance.uuid)
+        LOG.debug("Power On Instance in Azure Finish.", instance=instance)

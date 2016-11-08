@@ -149,7 +149,7 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 
 - 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB.
 - VM挂载磁盘必须是以vhd结尾的page blob.
-- Azure doesn't support create .vhd page blob, copy from existing .vhd(take a 1GB base .vhd), then resize.
+- create vhd footer with size and upload to azure.
 
 |Category|API|Azure
 |:--|:--|:--
