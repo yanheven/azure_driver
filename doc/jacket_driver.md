@@ -22,9 +22,9 @@
 ||List addresses by network|compute driver管理不了,查询DB
 |Server actions|Change password|Azure api: Create or update a VM  实现细节: 有密码复杂度要求,实现时查看azure文档做检查,复杂度不通过返回错误提示.
 ||Reboot server|Azure api: Restart a VM  实现细节: 无
-||Rebuild server|不支持
+||Rebuild server|Azure api: Redploy 实现细节: cold migrate to another azure host, keep persistent disk data, can't change image or ther config of vm
 ||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
-||Confirm resized server|不支持
+||Confirm resized server|empty method, don't need call azure
 ||Revert resized server|不支持
 ||Create image|Azure api: Copy Blob  实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
 |Flavors|List flavors|compute driver管理不了,查询DB
@@ -57,7 +57,7 @@
 ||List servers with IP type|不明白对应哪个NOVA API接口
 |Servers multiple create (servers)|Create multiple servers|Azure api: Create or update a VM  实现细节: 多次创建VM,检查要创建VM的指定资源是否是唯一的,比如指定某个IP,某个磁盘等,是不允许的.
 |Servers deferred delete (servers, action)|Force delete server|Azure api: Delete a VM  实现细节: azure的删除本身就是强制的.
-||Restore server|Azure api: DStop and deallocate a virtual machine和Start a VM  实现细节: azure支持不占用计算资源的关机,不收费,需要时可以恢复使用.但这些资源要有机制进行定期回收,不然会变成垃圾资源.
+||Restore server|Azure api: Stop and deallocate a virtual machine和Start a VM  实现细节: azure支持不占用计算资源的关机,不收费,需要时可以恢复使用.但这些资源要有机制进行定期回收,不然会变成垃圾资源.
 |Servers rescue and unrescue (servers, action)|Rescue server|不支持
 ||Unrescue server|不支持
 |Servers shelve (servers, action)|Shelve server|不支持
@@ -147,7 +147,7 @@
 ####说明
 OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创建VM时指定的操作系统盘,额外挂载的数据盘,存储镜像,从VM导出的镜像,快照都是它.
 
-- 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB.
+- 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB(from perspective of vm, not the .vhd file size).
 - VM挂载磁盘必须是以vhd结尾的page blob.
 - create vhd footer with size and upload to azure.
 

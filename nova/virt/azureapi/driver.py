@@ -1,23 +1,10 @@
-
-"""
-Driver base-classes:
-
-    (Beginning of) the contract that compute drivers must follow, and shared
-    types that support that contract
-"""
-
-import sys
-import uuid
-import json
+import re
 
 from oslo_log import log as logging
-from oslo_utils import importutils
-import six
+from oslo_service import loopingcall
 
 import nova.conf
 from nova.i18n import _, _LE, _LI
-from nova import utils
-from nova.virt import event as virtevent
 from nova.virt import driver
 from nova.virt.azureapi.adapter import Azure
 from nova.virt.azureapi import constant
@@ -27,6 +14,7 @@ from nova.virt.hardware import InstanceInfo
 from nova.compute import arch
 from nova.compute import hv_type
 from nova.compute import vm_mode
+from nova.compute import task_states
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -36,7 +24,7 @@ class AzureDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": False,
         "supports_recreate": False,
-        "supports_migrate_to_same_host": False,
+        "supports_migrate_to_same_host": True,
         "supports_attach_interface": False,
         "supports_device_tagging": False,
     }
@@ -114,6 +102,9 @@ class AzureDriver(driver.ComputeDriver):
         self._precreate_network()
         LOG.debug("Create/Update Ntwork and Subnet, Done.")
 
+    def get_host_ip_addr(self):
+        return CONF.my_ip
+
     def get_available_nodes(self, refresh=False):
         return 'azure-{}'.format(CONF.azure.location)
 
@@ -139,48 +130,56 @@ class AzureDriver(driver.ComputeDriver):
 
     def get_info(self, instance):
         """Get the current status of an instance
-
-        :param instance: nova.objects.instance.Instance object
-
-        Returns a InstanceInfo object
+        state for azure:running, deallocating, deallocated,
+        stopping , stopped
         """
+        shutdown_staues = ['deallocating', 'deallocated',
+                           'stopping', 'stopped']
         instance_id = instance.uuid
-        LOG.debug('Virtual Machine id is {}'.format(instance_id))
-
         vm = self.compute.virtual_machines.get(
-            CONF.azure.resource_group, instance_id)
+            CONF.azure.resource_group, instance_id, expand='instanceView')
         LOG.debug('vm info is: {}'.format(vm))
-
         state = power_state.NOSTATE
-
-        # TODO
-        return InstanceInfo(
-            state=state,
-            max_mem_kb=2048,
-            mem_kb=1024,
-            num_cpu=2,
-            cpu_time_ns=0,
-            id=instance_id)
+        status = 'Unkown'
+        if vm and vm.instance_view and vm.instance_view.statuses:
+            for i in vm.instance_view.statuses:
+                if 'PowerState' in i.code:
+                    status = i.code.split('/')[1]
+                    if 'running' == status:
+                        state = power_state.RUNNING
+                    elif status in shutdown_staues:
+                        state = power_state.SHUTDOWN
+                    break
+        LOG.debug('vm: {} state is : {}'.format(instance_id, status))
+        return InstanceInfo(state=state, id=instance_id)
 
     def get_available_resource(self, nodename):
-        """Retrieve resource information.
-
-        This method is called when nova-compute launches, and
-        as part of a periodic task that records the results in the DB.
-
-        :param nodename: unused in this driver
-        :returns: dictionary containing resource info
-        "vcpus", "memory_mb", "local_gb", "cpu_info","vcpus_used",
-        "memory_mb_used", "local_gb_used","numa_topology"
-        """
-        return {'vcpus': 10000,
+        usage_family = 'basicAFamily'
+        page = self.compute.usage.list(CONF.azure.location)
+        usages = [i for i in page]
+        cores = 0
+        cores_by_family = 0
+        cores_used = 0
+        cores_used_by_family = 0
+        for i in usages:
+            if i.name and i.name.value:
+                if 'cores' == i.name.value:
+                    cores = i.limit if i.limit else 0
+                    cores_used = i.current_value if i.current_value else 0
+                    break
+                if usage_family == i.name.value:
+                    cores_by_family = i.limit
+                    cores_used_by_family = i.current_value if i.current_value else 0
+        cores = min(cores, cores_by_family)
+        cores_used = min(cores_used, cores_by_family)
+        return {'vcpus': cores,
                 'memory_mb': 100000000,
                 'local_gb': 100000000,
-                'vcpus_used': 0,
-                'memory_mb_used': 1000,
-                'local_gb_used': 1000,
-                'hypervisor_type': 'aws',
-                'hypervisor_version': 5005000,
+                'vcpus_used': cores_used,
+                'memory_mb_used': 0,
+                'local_gb_used': 0,
+                'hypervisor_type': hv_type.HYPERV,
+                'hypervisor_version': 0300,
                 'hypervisor_hostname': nodename,
                 'cpu_info': '{"model": ["Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz"], \
                 "topology": {"cores": 16, "threads": 32}}',
@@ -217,8 +216,7 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Get image mapping:{}".format(image_ref))
         return image_ref
 
-    def _get_instance_size(self, instance):
-        flavor = instance.get_flavor()
+    def _get_size_from_flavor(self, flavor):
         flavor_name = flavor.get('name')
         vm_size = constant.FLAVOR_MAPPING.get(flavor_name, None)
         if not vm_size:
@@ -230,15 +228,13 @@ class AzureDriver(driver.ComputeDriver):
                               nic_id, admin_password):
         """Create the VM parameters structure.
         """
-        if instance.os_type == "windows":
-            user = "Administrator"
-        else:
-            user = "root"
+        import pdb
+        pdb.set_trace()
         vm_parameters = {
             'location': CONF.azure.location,
             'os_profile': {
-                'computer_name': instance.uuid,
-                'admin_username': user,
+                'computer_name': instance.hostname,
+                'admin_username': 'azureuser',
                 'admin_password': admin_password
             },
             'hardware_profile': {
@@ -269,19 +265,17 @@ class AzureDriver(driver.ComputeDriver):
               admin_password, network_info=None, block_device_info=None):
         instance_uuid = instance.uuid
         image_reference = self._get_image_from_mapping(image_meta) or None
-        vm_size = self._get_instance_size(instance) or None
+        vm_size = self._get_size_from_flavor(instance.get_flavor()) or None
         nic_id = self._create_nic(instance_uuid)
         vm_parameters = self._create_vm_parameters(
             instance, image_reference, vm_size, nic_id, admin_password)
 
-        async_vm_creation = self.compute.virtual_machines.create_or_update(
+        async_vm_action = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance_uuid, vm_parameters)
-
         LOG.debug("Calling Create Instance in Azure ...", instance=instance)
-
-        async_vm_creation.wait()
-
+        async_vm_action.wait()
         LOG.debug("Create Instance in Azure Finish.", instance=instance)
+        # TODO DELETE NIC if create vm failed.
 
     def cleanup(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None, destroy_vifs=True):
@@ -296,24 +290,10 @@ class AzureDriver(driver.ComputeDriver):
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
-        """Destroy the specified instance from the Hypervisor.
-
-        If the instance is not found (for example if networking failed), this
-        function should still succeed.  It's probably a good idea to log a
-        warning in that case.
-
-        :param context: security context
-        :param instance: Instance object as returned by DB layer.
-        :param network_info: instance network information
-        :param block_device_info: Information about block devices that should
-                                  be detached from the instance.
-        :param destroy_disks: Indicates if disks should be destroyed
-        :param migrate_data: implementation specific params
-        """
         LOG.debug("Calling Delete Instance in Azure ...", instance=instance)
-        result = self.compute.virtual_machines.delete(
+        async_vm_action = self.compute.virtual_machines.delete(
             CONF.azure.resource_group, instance.uuid)
-        result.wait()
+        async_vm_action.wait()
         LOG.debug("Delete Instance in Azure Finish.", instance=instance)
         self.cleanup(context, instance, network_info, block_device_info,
                      destroy_disks, migrate_data)
@@ -322,30 +302,115 @@ class AzureDriver(driver.ComputeDriver):
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        # TODO check status before reboot
-        self.compute.virtual_machines.restart(
+        async_vm_action = self.compute.virtual_machines.restart(
             CONF.azure.resource_group, instance.uuid)
+        async_vm_action.wait()
         LOG.debug("Restart Instance in Azure Finish.", instance=instance)
 
-    def attach_volume(self, context, connection_info, instance, mountpoint,
-                      disk_bus=None, device_type=None, encryption=None):
-        """Attach the disk to the instance at mountpoint using info."""
-        raise NotImplementedError()
-
-    def detach_volume(self, connection_info, instance, mountpoint,
-                      encryption=None):
-        """Detach the disk attached to the instance."""
-        raise NotImplementedError()
-
     def power_off(self, instance, timeout=0, retry_interval=0):
-        # TODO check status before power_off
-        self.compute.virtual_machines.power_off(
+        async_vm_action = self.compute.virtual_machines.power_off(
             CONF.azure.resource_group, instance.uuid)
+        async_vm_action.wait()
         LOG.debug("Power off Instance in Azure Finish.", instance=instance)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
-        # TODO check status before start
-        self.compute.virtual_machines.start(
+        async_vm_action = self.compute.virtual_machines.start(
             CONF.azure.resource_group, instance.uuid)
+        async_vm_action.wait()
         LOG.debug("Power On Instance in Azure Finish.", instance=instance)
+
+    def rebuild(self, context, instance, image_meta, injected_files,
+                admin_password, bdms, detach_block_devices,
+                attach_block_devices, network_info=None,
+                recreate=False, block_device_info=None,
+                preserve_ephemeral=False):
+        async_vm_action = self.compute.virtual_machines.redeploy(
+            CONF.azure.resource_group, instance.uuid)
+        LOG.debug("Calling Rebuild Instance in Azure ...", instance=instance)
+        async_vm_action.wait()
+        LOG.debug("Rebuild Instance in Azure Finish.", instance=instance)
+        instance.task_state = task_states.REBUILD_SPAWNING
+        instance.save()
+
+    def finish_migration(self, context, migration, instance, disk_info,
+                         network_info, image_meta, resize_instance,
+                         block_device_info=None, power_on=True):
+        # nothing need to do.
+        pass
+
+    def _get_new_size(self, instance, flavor):
+        sizes = self.compute.virtual_machines.list_available_sizes(
+            CONF.azure.resource_group, instance.uuid)
+        vm_size = self._get_size_from_flavor(flavor)
+        for i in sizes:
+            if vm_size == i.name:
+                LOG.debug('Resize Instance, get new size', instance=instance)
+                return i.name
+        LOG.debug('Resize Instance, size invalid in Azure', instance=instance)
+        raise exception.FlavorInvalid(
+            flavor_name=instance.get_flavor(),
+            instance_uuid = instance.uuid)
+
+    def migrate_disk_and_power_off(self, context, instance, dest,
+                                   flavor, network_info,
+                                   block_device_info=None,
+                                   timeout=0, retry_interval=0):
+        size_obj = self._get_new_size(instance, flavor)
+        vm = self.compute.virtual_machines.get(
+            CONF.azure.resource_group, instance.uuid)
+        vm.hardware_profile.vm_size = size_obj
+        async_vm_action = self.compute.virtual_machines.create_or_update(
+            CONF.azure.resource_group, instance.uuid, vm)
+        LOG.debug("Calling Resize Instance in Azure ...", instance=instance)
+        async_vm_action.wait()
+        LOG.debug("Resize Instance in Azure finish", instance=instance)
+        return True
+
+    def get_volume_connector(self, instance):
+        # nothing need to do with volume
+        pass
+
+    def confirm_migration(self, migration, instance, network_info):
+        # nothing need to do with volume
+        pass
+
+    def set_admin_password(self, instance, new_pass):
+        # extension = self.compute.virtual_machine_extensions.get(
+        #     CONF.azure.resource_group, instance.uuid, 'enablevmaccess')
+        # import pdb
+        # pdb.set_trace()
+        if not self._check_password(new_pass):
+            LOG.exception(_LE('set_admin_password failed: password does not'
+                              ' meet reqirements.'),
+                          instance=instance)
+            raise Exception
+        vm = self.compute.virtual_machines.get(
+            CONF.azure.resource_group, instance.uuid)
+        vm.os_profile.admin_password = new_pass
+        LOG.debug(vm, instance=instance)
+        async_vm_action = self.compute.virtual_machines.create_or_update(
+            CONF.azure.resource_group, instance.uuid, vm)
+        LOG.debug("Calling Reset Password of Instance in Azure ...",
+                  instance=instance)
+        async_vm_action.wait()
+        LOG.debug("Reset Password of Instance in Azure finish",
+                  instance=instance)
+
+    def _check_password(self, password):
+        """Check password according to azure's specification.
+
+        :param password: password to set for a instance.
+        :return: True or False, True for passed, False for failed.
+        """
+        rule = re.compile("(?=^.{8,72}$)((?=.*\d)(?=.*[A-Z])(?=.*[a-z])|"
+                          "(?=.*\d)(?=.*[^A-Za-z0-9])(?=.*[a-z])|(?=.*[^A"
+                          "-Za-z0-9])(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*"
+                          "[A-Z])(?=.*[^A-Za-z0-9]))^.*")
+        if not rule.match(password):
+            return False
+
+        disallow = ["abc@123", "P@$$w0rd", "P@ssw0rd", "P@ssword123",
+                    "Pa$$word", "pass@word1", "Password!", "Password1",
+                    "Password22", "iloveyou!"]
+        return not password in disallow
