@@ -111,3 +111,31 @@ class AzureDriver(driver.VolumeDriver):
 
     def remove_export(self, context, volume):
         pass
+
+    def ensure_export(self, context, volume):
+        pass
+
+    def create_export(self, context, volume, connector, vg=None):
+        # nothing to do in azure.
+        pass
+
+    def initialize_connection(self, volume, connector):
+        vhd_uri = self.storage.make_blob_url(
+            self.configuration.azure_storage_container_name, volume.name)
+        vhd_uri += '.vhd'
+        connection_info = {
+            'driver_volume_type': 'vmdk',
+            'data': {'volume_name': volume.name,
+                     'volume_id': volume.id,
+                     'vhd_uri': vhd_uri,
+                     'vhd_size_gb': volume.size,
+                     'vhd_name': volume.name
+                     }
+            }
+        return connection_info
+
+    def validate_connector(self, connector):
+        pass
+
+    def terminate_connection(self, volume, connector, **kwargs):
+        pass

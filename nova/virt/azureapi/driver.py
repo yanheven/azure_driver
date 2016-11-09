@@ -228,8 +228,6 @@ class AzureDriver(driver.ComputeDriver):
                               nic_id, admin_password):
         """Create the VM parameters structure.
         """
-        import pdb
-        pdb.set_trace()
         vm_parameters = {
             'location': CONF.azure.location,
             'os_profile': {
@@ -369,7 +367,12 @@ class AzureDriver(driver.ComputeDriver):
 
     def get_volume_connector(self, instance):
         # nothing need to do with volume
-        pass
+        props = {}
+        props['platform'] = 'azure'
+        props['os_type'] = 'azure'
+        props['ip'] = CONF.my_ip
+        props['host'] = CONF.host
+        return props
 
     def confirm_migration(self, migration, instance, network_info):
         # nothing need to do with volume
@@ -378,8 +381,7 @@ class AzureDriver(driver.ComputeDriver):
     def set_admin_password(self, instance, new_pass):
         # extension = self.compute.virtual_machine_extensions.get(
         #     CONF.azure.resource_group, instance.uuid, 'enablevmaccess')
-        # import pdb
-        # pdb.set_trace()
+
         if not self._check_password(new_pass):
             LOG.exception(_LE('set_admin_password failed: password does not'
                               ' meet reqirements.'),
@@ -414,3 +416,49 @@ class AzureDriver(driver.ComputeDriver):
                     "Pa$$word", "pass@word1", "Password!", "Password1",
                     "Password22", "iloveyou!"]
         return not password in disallow
+
+    def attach_volume(self, context, connection_info, instance, mountpoint,
+                      disk_bus=None, device_type=None, encryption=None):
+        data = connection_info['data']
+        vm = self.compute.virtual_machines.get(
+            CONF.azure.resource_group, instance.uuid)
+        data_disks = vm.storage_profile.data_disks
+        luns = [i.lun for i in data_disks]
+        new_lun = 0
+        for i in range(100):
+            if i not in luns:
+                new_lun = i
+                break
+        data_disk = dict(lun=new_lun,
+                         name=data['vhd_name'],
+                         vhd=dict(uri=data['vhd_uri']),
+                         create_option='attach',
+                         disk_size_gb = data['vhd_size_gb'])
+        data_disks.append(data_disk)
+        async_vm_action = self.compute.virtual_machines.create_or_update(
+            CONF.azure.resource_group, instance.uuid, vm)
+        LOG.debug("Calling Attach Volume to  Instance in Azure ...", instance=instance)
+        async_vm_action.wait()
+        LOG.debug("Attach Volume to Instance in Azure finish", instance=instance)
+
+    def detach_volume(self, connection_info, instance, mountpoint,
+                      encryption=None):
+        vhd_name = connection_info['data']['vhd_name']
+        vm = self.compute.virtual_machines.get(
+            CONF.azure.resource_group, instance.uuid)
+        data_disks = vm.storage_profile.data_disks
+        not_found = True
+        for i in range(len(data_disks)):
+            if vhd_name == data_disks[i].name:
+                del data_disks[i]
+                not_found = False
+                break
+        if not_found:
+            LOG.warn('Volume: %s was not attached to Instance!' % vhd_name,
+                     instance=instance)
+            return
+        async_vm_action = self.compute.virtual_machines.create_or_update(
+            CONF.azure.resource_group, instance.uuid, vm)
+        LOG.debug("Calling Detach Volume to  Instance in Azure ...", instance=instance)
+        async_vm_action.wait()
+        LOG.debug("Detach Volume to Instance in Azure finish", instance=instance)
