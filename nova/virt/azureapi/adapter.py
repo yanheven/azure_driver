@@ -14,6 +14,7 @@ from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.compute import ComputeManagementClient
+from azure.storage import CloudStorageAccount
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -63,4 +64,11 @@ class Azure(object):
                                                CONF.azure.subscription_id)
         self.network = NetworkManagementClient(credentials,
                                                CONF.azure.subscription_id)
+        account_keys = self.storage.storage_accounts.list_keys(
+            CONF.azure.resource_group, CONF.azure.storage_account)
+        key_str = account_keys.keys[0].value
+        self.account = CloudStorageAccount(
+            account_name=CONF.azure.storage_account,
+            account_key=key_str)
+        self.blob = self.account.create_page_blob_service()
         LOG.debug('Azure Management Clients Got')

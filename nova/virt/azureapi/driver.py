@@ -15,6 +15,7 @@ from nova.compute import arch
 from nova.compute import hv_type
 from nova.compute import vm_mode
 from nova.compute import task_states
+from nova.volume import cinder
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ class AzureDriver(driver.ComputeDriver):
         self.network = self.azure.network
         self.storage = self.azure.storage
         self.resource = self.azure.resource
+        self.blob = self.azure.blob
+
+        self._volume_api = cinder.API()
 
     def _precreate_network(self):
         """Pre Create Network info in Azure.
@@ -278,9 +282,10 @@ class AzureDriver(driver.ComputeDriver):
     def cleanup(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None, destroy_vifs=True):
         # 1 clean vhd
-        # TODO.call volume delete api to delete os disk
-
-        # 2 clean nic
+        os_container_name = 'vhds'
+        os_blob_name = instance.uuid + '.vhd'
+        self.blob.delete_blob(os_container_name, os_blob_name)
+        LOG.debug("Delete instance's Volume", instance=instance)
         self.network.network_interfaces.delete(
             CONF.azure.resource_group, instance.uuid
         )
