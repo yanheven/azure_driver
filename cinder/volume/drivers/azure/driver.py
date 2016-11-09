@@ -139,3 +139,34 @@ class AzureDriver(driver.VolumeDriver):
 
     def terminate_connection(self, volume, connector, **kwargs):
         pass
+
+    def create_snapshot(self, snapshot):
+        azure_snapshot_id = self.storage.snapshot_blob(
+            self.configuration.azure_storage_container_name,
+            snapshot['volume_name']
+        )
+        LOG.debug('Created Snapshot: {} in Azure.'.format(azure_snapshot_id))
+        metadata = snapshot['meta']
+        metadata['azure_snapshot_id'] = azure_snapshot_id
+        return dict(metadata=metadata)
+
+    def delete_snapshot(self, snapshot):
+        azure_snapshot_id = snapshot['metadata']['azure_snapshot_id']
+        self.storage.delete_blob(
+            self.configuration.azure_storage_container_name,
+            snapshot['volume_name'],
+            snapshot=azure_snapshot_id
+        )
+        LOG.debug('Deleted Snapshot: {} in Azure.'.format(azure_snapshot_id))
+
+    def create_volume_from_snapshot(self, volume, snapshot):
+        blob_name = self._get_blob_name(volume)
+        azure_snapshot_id = snapshot['metadata']['azure_snapshot_id']
+        old_blob_uri = self.storage.make_blob_url(
+            self.configuration.azure_storage_container_name, blob_name)
+        snapshot_uri = old_blob_uri + '?snapshot=' + azure_snapshot_id
+        self.storage.copy_blob(
+            self.configuration.azure_storage_container_name,
+            blob_name, snapshot_uri)
+        LOG.debug('Create Volume from Snapshot: {} in '
+                  'Azure.'.format(azure_snapshot_id))

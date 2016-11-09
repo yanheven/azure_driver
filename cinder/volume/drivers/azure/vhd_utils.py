@@ -57,7 +57,7 @@ def generate_vhd_footer(size):
     # Checksum = ones compliment of sum of all fields excluding checksum field
     to_checksum_array = cookie + features + version + data_offset + timestamp + creator_app + creator_version + creator_os + original_size + current_size + disk_geometry + disk_type + unique_id + saved_reserved
 
-    total = 0;
+    total = 0
     for b in to_checksum_array:
         total += b
 
