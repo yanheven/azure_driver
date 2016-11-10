@@ -8,7 +8,7 @@ from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import units
-import six
+from oslo_service import loopingcall
 
 from cinder.brick.local_dev import lvm as lvm
 from cinder import exception
@@ -21,6 +21,8 @@ from cinder.volume import driver
 from cinder.volume import utils as volutils
 from azure.storage import CloudStorageAccount
 from cinder.volume.drivers.azure import vhd_utils as azutils
+from azure.storage.blob.models import  Include
+from cinder import exception
 
 LOG = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ and use numbers and lower-case letters only."""),
 
 CONF = cfg.CONF
 CONF.register_opts(volume_opts)
+VHD = '.vhd'
 
 
 @interface.volumedriver
@@ -85,7 +88,7 @@ class AzureDriver(driver.VolumeDriver):
     def _get_blob_name(self, volume):
         """Get blob name from volume name
         """
-        return volume.name + '.vhd'
+        return volume.name + VHD
 
     def create_volume(self, volume):
         size = volume.size * units.Gi
@@ -104,6 +107,33 @@ class AzureDriver(driver.VolumeDriver):
 
     def delete_volume(self, volume):
         blob_name = self._get_blob_name(volume)
+        exists = self.storage.exists(
+            self.configuration.azure_storage_container_name,
+            blob_name
+        )
+
+        if not exists:
+            LOG.warn('Delete an Inexistent Volume: {} in Azure.'.
+                     format(blob_name))
+            return
+
+        # Delete exist snapshots in Azure before Volume,
+        # if thers are snapshots managed by cinder, can't go here.
+        # if go here, and snapshots in Azure exists, these snapshots
+        # are zombie snapshots in Azure.
+        blob_pages = self.storage.list_blobs(
+            self.configuration.azure_storage_container_name,
+            include=Include(snapshots=True)
+        )
+        for i in blob_pages:
+            if blob_name == i.name and i.snapshot:
+                self.storage.delete_blob(
+                    self.configuration.azure_storage_container_name,
+                    blob_name, snapshot=i.snapshot
+                )
+                LOG.info("Delete Zombie Snapshot {} of Volume {} in Azure "
+                         "...".format(i.snapshot, volume.name))
+
         LOG.debug("Calling Delete Volume '%s' in Azure ...", volume.name)
         self.storage.delete_blob(
             self.configuration.azure_storage_container_name,  blob_name)
@@ -122,7 +152,7 @@ class AzureDriver(driver.VolumeDriver):
     def initialize_connection(self, volume, connector):
         vhd_uri = self.storage.make_blob_url(
             self.configuration.azure_storage_container_name, volume.name)
-        vhd_uri += '.vhd'
+        vhd_uri += VHD
         connection_info = {
             'driver_volume_type': 'vmdk',
             'data': {'volume_name': volume.name,
@@ -141,20 +171,31 @@ class AzureDriver(driver.VolumeDriver):
         pass
 
     def create_snapshot(self, snapshot):
-        azure_snapshot_id = self.storage.snapshot_blob(
+        snapshot_blob = self.storage.snapshot_blob(
             self.configuration.azure_storage_container_name,
-            snapshot['volume_name']
+            snapshot['volume_name'] + VHD
         )
+        azure_snapshot_id = snapshot_blob.snapshot
         LOG.debug('Created Snapshot: {} in Azure.'.format(azure_snapshot_id))
-        metadata = snapshot['meta']
+        metadata = snapshot['metadata']
         metadata['azure_snapshot_id'] = azure_snapshot_id
         return dict(metadata=metadata)
 
     def delete_snapshot(self, snapshot):
         azure_snapshot_id = snapshot['metadata']['azure_snapshot_id']
+        exists = self.storage.exists(
+            self.configuration.azure_storage_container_name,
+            snapshot['volume_name'] + VHD,
+            snapshot=azure_snapshot_id
+        )
+        if not exists:
+            LOG.warn('Delete an Inexistent Snapshot: {} in Azure.'.
+                     format(azure_snapshot_id))
+            return
+
         self.storage.delete_blob(
             self.configuration.azure_storage_container_name,
-            snapshot['volume_name'],
+            snapshot['volume_name'] + VHD,
             snapshot=azure_snapshot_id
         )
         LOG.debug('Deleted Snapshot: {} in Azure.'.format(azure_snapshot_id))
@@ -163,10 +204,89 @@ class AzureDriver(driver.VolumeDriver):
         blob_name = self._get_blob_name(volume)
         azure_snapshot_id = snapshot['metadata']['azure_snapshot_id']
         old_blob_uri = self.storage.make_blob_url(
-            self.configuration.azure_storage_container_name, blob_name)
+            self.configuration.azure_storage_container_name,
+            snapshot['volume_name'] + VHD)
         snapshot_uri = old_blob_uri + '?snapshot=' + azure_snapshot_id
+        exists = self.storage.exists(
+            self.configuration.azure_storage_container_name,
+            snapshot['volume_name'] + VHD,
+            snapshot=azure_snapshot_id
+        )
+        if not exists:
+            LOG.warn('Copy an Inexistent Snapshot: {} in Azure.'.
+                     format(azure_snapshot_id))
+            raise exception.SnapshotNotFound(snapshot_id=snapshot['id'])
         self.storage.copy_blob(
             self.configuration.azure_storage_container_name,
             blob_name, snapshot_uri)
+
+        def _wait_for_copy():
+            """Called at an copy until finish."""
+            copy = self.storage.get_blob_properties(
+                self.configuration.azure_storage_container_name,
+                blob_name)
+            state = copy.properties.copy.status
+
+            if state == 'success':
+                LOG.info(_LI("Created Volume from Snapshot: {} in Azure.".
+                             format(azure_snapshot_id)))
+                raise loopingcall.LoopingCallDone()
+            else:
+                LOG.debug(
+                    'Create Volume from Snapshot: {} in Azure Progress '
+                    '{}'.format(
+                        azure_snapshot_id, copy.properties.copy.progress))
+
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+        timer.start(interval=0.5).wait()
+        if volume['size'] != snapshot['volume_size']:
+            LOG.warn(_LW("Created Volume from Snapshot: {} in Azure can't be "
+                         "resized, use Snapshot size {} GB for new Volume.".
+                         format(blob_name, snapshot['volume_size'])))
+            volume.update(dict(size=snapshot['volume_size']))
+            volume.save()
         LOG.debug('Create Volume from Snapshot: {} in '
                   'Azure.'.format(azure_snapshot_id))
+
+    def create_cloned_volume(self, volume, src_vref):
+        src_blob_name = src_vref['name'] + VHD
+        exists = self.storage.exists(
+            self.configuration.azure_storage_container_name, src_blob_name)
+        if not exists:
+            LOG.warn('Copy an Inexistent Volume: {} in Azure.'.
+                     format(src_blob_name))
+            raise exception.VolumeNotFound(volume_id=src_vref['id'])
+
+        blob_name = self._get_blob_name(volume)
+        src_blob_uri = self.storage.make_blob_url(
+            self.configuration.azure_storage_container_name, src_blob_name)
+        self.storage.copy_blob(
+            self.configuration.azure_storage_container_name,
+            blob_name, src_blob_uri)
+
+        def _wait_for_copy():
+            """Called at an copy until finish."""
+            copy = self.storage.get_blob_properties(
+                self.configuration.azure_storage_container_name,
+                blob_name)
+            state = copy.properties.copy.status
+
+            if state == 'success':
+                LOG.info(_LI("Created Clone Volume: {} in Azure.".
+                             format(blob_name)))
+                raise loopingcall.LoopingCallDone()
+            else:
+                LOG.debug(
+                    'Create Clone Volume: {} in Azure Progress '
+                    '{}'.format(blob_name, copy.properties.copy.progress))
+
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+        timer.start(interval=0.5).wait()
+        if volume['size'] != src_vref['size']:
+            LOG.warn(_LW("Clone Volume: {} in Azure can't be resized,"
+                         "use source size {} GB for new Volume.".
+                         format(blob_name, src_vref['size'])))
+            volume.update(dict(size=src_vref['size']))
+            volume.save()
+        LOG.debug('Create Volume from Snapshot: {} in '
+                  'Azure.'.format(blob_name))
