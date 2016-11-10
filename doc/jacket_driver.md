@@ -1,4 +1,11 @@
 ### Jacket Nova API
+####说明
+所有虚拟机创建在同一个resource group下面，暂定名为ops_resource_group, 包括后面的voluem也是这个resource group下，操作系统磁盘azure自动放在名为vhds的storage container里，网络和子网提前创建好，填写好flavor、image的映射。
+
+映射：  
+Instance:  
+Openstack instance: {'uuid': '21b87391-a91e-4ad0-8bac-855271af61fd', 'name': 'azure13'}  
+Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name': '21b87391-a91e-4ad0-8bac-855271af61fd.vhd'}, interface {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}
 
 |Category|API|Azure
 |:--|:--|:--
@@ -7,7 +14,7 @@
 |Extensions|List extensions|compute driver管理不了,查询DB."Extensions are a deprecated concept in Nova."
 ||Get extension|compute driver管理不了,查询DB
 |Servers|List servers|compute driver管理不了,查询DB
-||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.  8 映射ID:azure支持tags,可以在调用azure接口创建VM时把openstack这边的VM ID写入到azure那边的tags里面.
+||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'，关于后续更改系统密码，要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.
 ||List details for servers|compute driver管理不了,查询DB
 ||Get server details|compute driver管理不了,查询DB
 ||Update server|compute driver管理不了,更新DB记录
@@ -20,11 +27,11 @@
 ||Delete server metadata item|azure更新VM只有Create or update a VM这个接口,没看到可以更新metadata
 |Server addresses|List addresses|compute driver管理不了,查询DB
 ||List addresses by network|compute driver管理不了,查询DB
-|Server actions|Change password|Azure api: Create or update a VM  实现细节: 有密码复杂度要求,实现时查看azure文档做检查,复杂度不通过返回错误提示.
+|Server actions|Change password|Azure api: Create or update a VM  实现细节: 有密码复杂度要求,实现时查看azure文档做检查,复杂度不通过返回错误提示.要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行
 ||Reboot server|Azure api: Restart a VM  实现细节: 无
-||Rebuild server|Azure api: Redploy 实现细节: cold migrate to another azure host, keep persistent disk data, can't change image or ther config of vm
+||Rebuild server|Azure api: Redploy 实现细节: 冷迁移到另外的宿主机上，但重新部署不能改变系统镜像。
 ||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
-||Confirm resized server|empty method, don't need call azure
+||Confirm resized server|实现空操作接口即可
 ||Revert resized server|不支持
 ||Create image|Azure api: Copy Blob  实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
 |Flavors|List flavors|compute driver管理不了,查询DB
@@ -146,10 +153,24 @@
 ### Jacket Cinder API
 ####说明
 OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创建VM时指定的操作系统盘,额外挂载的数据盘,存储镜像,从VM导出的镜像,快照都是它.
+在名为ops_resource_group的resource group 下面创建名为ops0storage0account的storage account, 用0分隔单词是因为它只接受字母与数据。创建名为volume的storage container,
+所有volume数额资源放在里，包括snapshot,backup等。另外名为vhds的storage container是虚拟机系统磁盘存放位置。
 
-- 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB(from perspective of vm, not the .vhd file size).
-- VM挂载磁盘必须是以vhd结尾的page blob.
-- create vhd footer with size and upload to azure.
+- 容量是512B倍数.但由于VM最小接受磁盘容量是1GB,所以这里也建议最小可创建容量为1GB(是站在虚拟机操作系统里看到的大小，blog应该是1GB+512Byte).
+- VM挂载磁盘必须是以vhd结尾的page blob,而且是标准的VHD格式文件.
+- VHD格式在文件最后512字节是格式内容，创建空page blob时把最后512字节按VHD格式要求写入内容。
+- 从volume/snapshot创建volume，只能是以原来的大小创建，因为对应在azure是一个vhd文件，改变其大小而不丢数据，大问题。
+
+映射关系：  
+Volume:  
+Openstack: volume:{'display_name':'testvolume', 'id': '17d95073-1ab7-4906-9518-6e09312f1655', 'name': 'volume-17d95073-1ab7-4906-9518-6e09312f1655'}  
+Azure: page blob:{'name': 'volume-17d95073-1ab7-4906-9518-6e09312f1655.vhd'}
+
+Snapshot:  
+Openstack: snapshot:{'volume': Volume(), 'metadata': {'azure_snapshot_id': "2016-11-09T14:11:07.6175300Z"}} 其中metadata信息是创建快照后在驱动实现方法处更新snapshot数据库记录。  
+Azure: page blog:{'name': 'volume-17d95073-1ab7-4906-9518-6e09312f1655.vhd', 'snapshot': '2016-11-09T14:11:07.6175300Z'}  
+
+
 
 |Category|API|Azure
 |:--|:--|:--
@@ -157,7 +178,7 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 ||Show API version details|volume driver管理不了,发行软件时指定
 |API extensions (extensions)|List API extensions|volume driver管理不了,查询DB
 |Limits (limits)|Show absolute limits|volume driver管理不了,查询DB,但可以查看azure里面的limit,进行配置.
-|Volumes (volumes)|Create volume|Azure api: Copy Blob & Put Page  实现细节: copy new .vhd page blob from base .vhd, then resize it,只能通过container_name和blob_name来对卷进行定位.
+|Volumes (volumes)|Create volume|Azure api: Copy Blob 实现细节：创建容量为size_Byte + 512 Byte的page blog,然后更新它的最后512字节为VHD格式内容。
 ||List volumes||volume driver管理不了,查询DB
 ||List volumes (detailed)|volume driver管理不了,查询DB
 ||Show volume information|volume driver管理不了,查询DB
@@ -166,8 +187,8 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 |Volume actions (volumes, action)|Reset volume statuses|volume driver管理不了,更新DB操作
 ||Set image metadata for volume|volume driver管理不了,更新DB操作:self.db.volume_metadata_update
 ||Remove image metadata from volume|volume driver管理不了,更新DB操作:self.db.volume_metadata_delete
-||Attach volume|Azure api: Create or update a VM  实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'.需要提前创建好.
-|Backups (backups)|Create backup|Azure api: Copy Blob  实现细节: 要把azure blob信息添加到volume,放到provider_id.
+||Attach volume|Azure api: Create or update a VM  实现细节: 更新VM信息时带上要挂载的volume的blob uri.'data_disk'。
+|Backups (backups)|Create backup|Azure api: Copy Blob  实现细节:
 ||List backups|volume driver管理不了,查询DB
 ||List backups (detailed)|volume driver管理不了,查询DB
 ||Show backup details|volume driver管理不了,查询DB
@@ -188,7 +209,7 @@ OpenStack里面的volume对应azure里面是Storage里面的Page Blog,包括创�
 ||Update extra specs for a volume type|volume driver管理不了,更新DB
 ||Show volume type information|volume driver管理不了,查询DB
 ||Delete volume type|volume driver管理不了,更新DB
-|Volume snapshots (snapshots)|Create snapshot|Azure api: Snapshot Blob  实现细节: 在azure上创建快照.要把azure blob信息添加到volume,放到provider_id.
+|Volume snapshots (snapshots)|Create snapshot|Azure api: Snapshot Blob  实现细节: 在azure上创建快照
 ||List snapshots|volume driver管理不了,查询DB
 ||List snapshots (detailed)|volume driver管理不了,查询DB
 ||Show snapshot information|volume driver管理不了,查询DB
