@@ -16,15 +16,25 @@ from nova.compute import hv_type
 from nova.compute import vm_mode
 from nova.compute import task_states
 from nova.volume import cinder
+from nova import image
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
+VOLUME_CONTAINER = 'volume'
+VHDS_CONTAINER = 'vhds'
+AZURE = 'azure'
+USER_NAME = 'azureuser'
+VHD_EXT = '.vhd'
+
+# TODO need complete according to image mapping.
+LINUX_OFFER = ['UbuntuServer', 'RedhatServer']
+WINDOWS_OFFER = ['WindowsServerEssentials']
 
 
 class AzureDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": False,
-        "supports_recreate": False,
+        "supports_recreate": True,
         "supports_migrate_to_same_host": True,
         "supports_attach_interface": False,
         "supports_device_tagging": False,
@@ -40,6 +50,7 @@ class AzureDriver(driver.ComputeDriver):
         self.blob = self.azure.blob
 
         self._volume_api = cinder.API()
+        self._image_api = image.API()
 
     def _precreate_network(self):
         """Pre Create Network info in Azure.
@@ -173,7 +184,8 @@ class AzureDriver(driver.ComputeDriver):
                     break
                 if usage_family == i.name.value:
                     cores_by_family = i.limit
-                    cores_used_by_family = i.current_value if i.current_value else 0
+                    cores_used_by_family = i.current_value \
+                        if i.current_value else 0
         cores = min(cores, cores_by_family)
         cores_used = min(cores_used, cores_by_family)
         return {'vcpus': cores,
@@ -185,14 +197,16 @@ class AzureDriver(driver.ComputeDriver):
                 'hypervisor_type': hv_type.HYPERV,
                 'hypervisor_version': 0300,
                 'hypervisor_hostname': nodename,
-                'cpu_info': '{"model": ["Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz"], \
-                "topology": {"cores": 16, "threads": 32}}',
-                'supported_instances':[(arch.I686, hv_type.HYPERV, vm_mode.HVM),
+                'cpu_info': '{"model": ["Intel(R) Xeon(R) CPU E5-2670 0 @ '
+                            '2.60GHz"], "topology": {"cores": 16, "threads": '
+                            '32}}',
+                'supported_instances': [(arch.I686, hv_type.HYPERV,
+                                         vm_mode.HVM),
                     (arch.X86_64, hv_type.HYPERV, vm_mode.HVM)],
                 'numa_topology': None
                 }
 
-    def _create_nic(self, instance_uuid):
+    def _prepare_network_profile(self, instance_uuid):
         """Create a Network Interface for a VM.
         """
         async_nic_creation = self.network.network_interfaces.create_or_update(
@@ -210,7 +224,12 @@ class AzureDriver(driver.ComputeDriver):
         )
         nic = async_nic_creation.result()
         LOG.debug("Create a Nic:{}".format(nic.id))
-        return nic.id
+        network_profile = {
+                'network_interfaces': [{
+                    'id': nic.id,
+                }]
+            }
+        return network_profile
 
     def _get_image_from_mapping(self, image_meta):
         image_name = image_meta.name
@@ -228,49 +247,112 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Get size mapping:{}".format(vm_size))
         return vm_size
 
-    def _create_vm_parameters(self, instance, image_reference, vm_size,
-                              nic_id, admin_password):
+    def _prepare_os_profile(self, instance, storage_profile, admin_password):
+        image_offer = storage_profile['image_reference']['offer']
+        os_profile = dict(computer_name=instance.hostname,
+                          admin_username=USER_NAME)
+        if image_offer in LINUX_OFFER:
+            instance.os_type = 'linux'
+            if CONF.libvirt.inject_key and instance.get('key_data'):
+                key_data = str(instance.key_data)
+                os_profile['linuxConfiguration'] = {
+                    'ssh': {
+                        'publicKeys': {
+                            'path': '/home/' + USER_NAME +
+                                    '/.ssh/authorized_keys',
+                            'keyData': key_data
+                        }
+                    }
+
+                }
+            else:
+                os_profile['admin_password'] = admin_password
+        elif image_offer in WINDOWS_OFFER:
+            instance.os_type = 'windows'
+            os_profile['admin_password'] = admin_password
+        return os_profile
+
+
+    def _create_vm_parameters(self, instance, storage_profile, vm_size,
+                              network_profile, os_profile):
         """Create the VM parameters structure.
         """
         vm_parameters = {
             'location': CONF.azure.location,
-            'os_profile': {
-                'computer_name': instance.hostname,
-                'admin_username': 'azureuser',
-                'admin_password': admin_password
-            },
+            'os_profile': os_profile,
             'hardware_profile': {
                 'vm_size': vm_size
             },
-            'storage_profile': {
+            'storage_profile': storage_profile,
+            'network_profile': network_profile,
+        }
+        LOG.debug("Create vm parameters:{}".format(vm_parameters))
+        return vm_parameters
+
+    def _prepare_storage_profile(self, image_meta, instance):
+        if 'location' in image_meta and 'type' in image_meta.location:
+            if image_meta.location['type'] == AZURE:
+                disk_name = instance.uuid + VHD_EXT
+                uri = image_meta.location['url']
+
+                # copy image diskt to new disk for instance.
+                self.blob.copy_blob(VHDS_CONTAINER, disk_name, uri)
+
+                def _wait_for_copy():
+                    """Called at an copy until finish."""
+                    copy = self.blob.get_blob_properties(
+                        VHDS_CONTAINER, disk_name)
+                    state = copy.properties.copy.status
+                    if state == 'success':
+                        LOG.info(_LI("Copied image disk to new blob:{} in"
+                                     " Azure.".format(disk_name)))
+                        raise loopingcall.LoopingCallDone()
+                    else:
+                        LOG.debug(
+                            'copy os disk: {} in Azure Progress '
+                            '{}'.format(disk_name,
+                                        copy.properties.copy.progress))
+
+                timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+                timer.start(interval=0.5).wait()
+
+                disk_uri = self.blob.make_blob_url(VHDS_CONTAINER, disk_name)
+                storage_profile = {
+                    'os_disk': {
+                        'name': instance.uuid,
+                        'caching': 'None',
+                        'create_option': 'attach',
+                        'vhd': {'uri': disk_uri}
+                    }
+                }
+            else:
+                raise Exception('Unknown type of location of image!')
+        else:
+            image_reference = self._get_image_from_mapping(image_meta) or None
+            uri = self.blob.make_blob_url(
+                VHDS_CONTAINER, instance.uuid+VHD_EXT)
+            storage_profile = {
                 'image_reference': image_reference,
                 'os_disk': {
                     'name': instance.uuid,
                     'caching': 'None',
                     'create_option': 'fromImage',
-                    'vhd': {
-                        'uri': 'https://{}.blob.core.windows.net/vhds/{}.vhd'.format(
-                            CONF.azure.storage_account, instance.uuid)
-                    }
-                },
-            },
-            'network_profile': {
-                'network_interfaces': [{
-                    'id': nic_id,
-                }]
-            },
-        }
-        LOG.debug("Create vm parameters:{}".format(vm_parameters))
-        return vm_parameters
+                    'vhd': {'uri': uri}
+                }
+            }
+
+        return storage_profile
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         instance_uuid = instance.uuid
-        image_reference = self._get_image_from_mapping(image_meta) or None
+        storage_profile = self._prepare_storage_profile(image_meta, instance)
         vm_size = self._get_size_from_flavor(instance.get_flavor()) or None
-        nic_id = self._create_nic(instance_uuid)
+        network_profile = self._prepare_network_profile(instance_uuid)
+        os_profile = self._prepare_os_profile(
+            instance, storage_profile, admin_password)
         vm_parameters = self._create_vm_parameters(
-            instance, image_reference, vm_size, nic_id, admin_password)
+            instance, storage_profile, vm_size, network_profile, os_profile)
 
         async_vm_action = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance_uuid, vm_parameters)
@@ -279,17 +361,18 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Create Instance in Azure Finish.", instance=instance)
         # TODO DELETE NIC if create vm failed.
 
-    def cleanup(self, context, instance, network_info, block_device_info=None,
-                destroy_disks=True, migrate_data=None, destroy_vifs=True):
+    def _cleanup_instance(self, instance):
         # 1 clean vhd
         os_container_name = 'vhds'
         os_blob_name = instance.uuid + '.vhd'
         self.blob.delete_blob(os_container_name, os_blob_name)
         LOG.debug("Delete instance's Volume", instance=instance)
-        self.network.network_interfaces.delete(
+        async_vm_action = self.network.network_interfaces.delete(
             CONF.azure.resource_group, instance.uuid
         )
+        async_vm_action.wait()
         LOG.debug("Delete instance's Interface", instance=instance)
+        return True
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
@@ -298,7 +381,7 @@ class AzureDriver(driver.ComputeDriver):
             CONF.azure.resource_group, instance.uuid)
         async_vm_action.wait()
         LOG.debug("Delete Instance in Azure Finish.", instance=instance)
-        self.cleanup(context, instance, network_info, block_device_info,
+        self._cleanup_instance(context, instance, network_info, block_device_info,
                      destroy_disks, migrate_data)
         LOG.info("Delete and Clean Up Instance in Azure Finish.",
                  instance=instance)
@@ -345,7 +428,7 @@ class AzureDriver(driver.ComputeDriver):
     def _get_new_size(self, instance, flavor):
         sizes = self.compute.virtual_machines.list_available_sizes(
             CONF.azure.resource_group, instance.uuid)
-        vm_size = self._get_size_from_flavor(flavor)
+        vm_size = self._get_size_from_flavor(flavor) or None
         for i in sizes:
             if vm_size == i.name:
                 LOG.debug('Resize Instance, get new size', instance=instance)
@@ -442,9 +525,11 @@ class AzureDriver(driver.ComputeDriver):
         data_disks.append(data_disk)
         async_vm_action = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance.uuid, vm)
-        LOG.debug("Calling Attach Volume to  Instance in Azure ...", instance=instance)
+        LOG.debug("Calling Attach Volume to  Instance in Azure ...",
+                  instance=instance)
         async_vm_action.wait()
-        LOG.debug("Attach Volume to Instance in Azure finish", instance=instance)
+        LOG.debug("Attach Volume to Instance in Azure finish",
+                  instance=instance)
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
@@ -464,6 +549,62 @@ class AzureDriver(driver.ComputeDriver):
             return
         async_vm_action = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance.uuid, vm)
-        LOG.debug("Calling Detach Volume to  Instance in Azure ...", instance=instance)
+        LOG.debug("Calling Detach Volume to  Instance in Azure ...",
+                  instance=instance)
         async_vm_action.wait()
-        LOG.debug("Detach Volume to Instance in Azure finish", instance=instance)
+        LOG.debug("Detach Volume to Instance in Azure finish",
+                  instance=instance)
+
+    def snapshot(self, context, instance, image_id, update_task_state):
+        snapshot = self._image_api.get(context, image_id)
+        snapshot_name = 'snapshot-' + snapshot.id + VHD_EXT
+        snapshot_url = self.blob.make_blob_url(VOLUME_CONTAINER, snapshot_name)
+        vm_osdisk_url = self.blob.make_blob_url(VHDS_CONTAINER,
+                                                instance.uuid+VHD_EXT)
+        metadata = {'is_public': False,
+                    'status': 'active',
+                    'name': snapshot_name,
+                    'location': {'url': snapshot_url,
+                                 'type': AZURE},
+                    'properties': {
+                                   'kernel_id': instance.kernel_id,
+                                   'image_location': 'snapshot',
+                                   'image_state': 'available',
+                                   'owner_id': instance.project_id,
+                                   'ramdisk_id': instance.ramdisk_id,
+                                   }
+                    }
+        self._image_api.update(context, image_id, metadata,
+                               purge_props=False)
+        LOG.debug("Update image for snapshot image.", instance=instance)
+
+        self.blob.copy_blob(VOLUME_CONTAINER, snapshot_name, vm_osdisk_url)
+        LOG.debug("Calling copy os disk in Azure...", insget_available_nodestance=instance)
+
+        def _wait_for_copy():
+            """Called at an copy until finish."""
+            copy = self.blob.get_blob_properties(VOLUME_CONTAINER,
+                                                 snapshot_name)
+            state = copy.properties.copy.status
+
+            if state == 'success':
+                LOG.info(_LI("Copied osdisk to new blob:{} for instance:{} in"
+                             " Azure.".format(snapshot_name, instance.uuid)))
+                raise loopingcall.LoopingCallDone()
+            else:
+                LOG.debug(
+                    'copy os disk: {} in Azure Progress '
+                    '{}'.format(snapshot_name, copy.properties.copy.progress))
+
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+        timer.start(interval=0.5).wait()
+
+        LOG.debug('Created Image from Instance: {} in Azure'
+                  '.'.format(instance.uuid))
+
+    def resume_state_on_host_boot(self, context, instance, network_info,
+                                  block_device_info=None):
+        pass
+
+    def delete_instance_files(self, instance):
+        return self._cleanup_instance(instance)
