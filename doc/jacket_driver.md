@@ -14,7 +14,7 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 |Extensions|List extensions|compute driver管理不了,查询DB."Extensions are a deprecated concept in Nova."
 ||Get extension|compute driver管理不了,查询DB
 |Servers|List servers|compute driver管理不了,查询DB
-||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.如果是通过VM创建的image,通过查看metadata里的"azuer_uir"确定.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'，关于后续更改系统密码，要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.
+||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.如果是通过VM创建的image,通过查看image.location.type确定,就会选择从azure上对应磁盘做为镜像来源启动.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'，关于后续更改系统密码，要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.
 ||List details for servers|compute driver管理不了,查询DB
 ||Get server details|compute driver管理不了,查询DB
 ||Update server|compute driver管理不了,更新DB记录
@@ -33,7 +33,7 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 ||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
 ||Confirm resized server|实现空操作接口即可
 ||Revert resized server|不支持
-||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的metadata,带上"azure_uri": "snapshot-(snapshot.uuid).vhd",将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"volume"这个storage container里.
+||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的location,带上{"type": "azure", "url": "snapshot-(snapshot.uuid).vhd"},将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"volume"这个storage container里.
 |Flavors|List flavors|compute driver管理不了,查询DB
 ||List details for flavors|compute driver管理不了,查询DB
 ||Get flavor details|compute driver管理不了,查询DB
@@ -149,6 +149,28 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 ||Create server backup|无法实现.与create image一样,会涉及image操作,依赖没实现.
 ||Reset server state|compute driver管理不了更新DB操作
 ||Add floating IP address|实现不了,因为这个过程会调用网络API:self.network_api.allocate_floating_ip和self.network_api.get_floating_ip_by_address,如果网络没对接azure,实现不了.
+
+### Nova Driver Periodic Task Interface
+|Interface for|Interface|Azure
+|:--|:--
+_check_instance_build_time||更新DB记录,驱动处不用实现
+_sync_scheduler_instance_info||驱动处不用实现
+_heal_instance_info_cache||驱动处不用实现
+_poll_rebooting_instances|resume_state_on_host_boot|空操作即可
+_poll_rescued_instances|unrescue|不支持
+_poll_unconfirmed_resizes||驱动处不用实现
+_poll_shelved_instances|destroy|已实现
+_instance_usage_audit||驱动处不用实现
+_poll_bandwidth_usage||不支持
+_poll_volume_usage||不支持
+_sync_power_states|get_num_instances, get_info|都已实现
+_reclaim_queued_deletes|destroy|已实现
+update_available_resource|get_available_nodes, get_available_resource|都已实现
+_cleanup_running_deleted_instances|destroy, set_bootable|已实现, 不支持锁定
+_run_image_cache_manager_pass||不支持
+_run_pending_deletes|delete_instance_files|已实现,_cleanup_instance
+_cleanup_incomplete_migrations||不支持migration
+
 
 ### Jacket Cinder API
 ####说明
