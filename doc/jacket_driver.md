@@ -152,7 +152,7 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 
 ### Nova Driver Periodic Task Interface
 |Interface for|Interface|Azure
-|:--|:--
+|:--|:--|:--
 _check_instance_build_time||更新DB记录,驱动处不用实现
 _sync_scheduler_instance_info||驱动处不用实现
 _heal_instance_info_cache||驱动处不用实现
