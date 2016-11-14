@@ -1,8 +1,10 @@
 ### Jacket Nova API
 ####说明
 所有虚拟机创建在同一个resource group下面，暂定名为ops_resource_group, 包括后面的voluem也是这个resource group下，操作系统磁盘azure自动放在名为vhds的storage container里，网络和子网提前创建好，填写好flavor、image的映射。
+linux: boot from instance snapshot can't set adminpass and key. keys were keep from snapshot, password was erased.
+windows boot from instance snapshot scenario unknown.
 
-映射：  
+映射：
 Instance:  
 Openstack instance: {'uuid': '21b87391-a91e-4ad0-8bac-855271af61fd', 'name': 'azure13'}  
 Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name': '21b87391-a91e-4ad0-8bac-855271af61fd.vhd'}, interface {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}
@@ -14,7 +16,7 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 |Extensions|List extensions|compute driver管理不了,查询DB."Extensions are a deprecated concept in Nova."
 ||Get extension|compute driver管理不了,查询DB
 |Servers|List servers|compute driver管理不了,查询DB
-||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.如果是通过VM创建的image,通过查看image.location.type确定,就会选择从azure上对应磁盘做为镜像来源启动.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'，关于后续更改系统密码，要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.
+||Create server|Azure api: Create or update a VM  实现细节: 创建VM过程如下:  1 flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".  2 image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID.如果是通过VM创建的image,通过查看image.properties.azure_type确定,就会选择从azure上对应磁盘做为镜像来源启动.update "os_type" of instance according to image.properties.azure_os_type if boot from user made image, or according to image-offer type in azure image market place.   3 boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.  4 keypair: 把相应的keypair的公钥传入到新创建VM.  5 password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'，关于后续更改系统密码，要通过azure extension来实现，就是通过一些azure官方提供的代理，执行更改密码操作，理论可行.  6 network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定, azure对应位置'network_profile':'network_interfaces':'id'.  7 security group: 创建VM的网卡时,指定哪个网络安全组(Network Security Group (NSG))作用在VM的网卡上,需要提前在azure上创建与openstack安全组对应的NSG.
 ||List details for servers|compute driver管理不了,查询DB
 ||Get server details|compute driver管理不了,查询DB
 ||Update server|compute driver管理不了,更新DB记录
@@ -33,7 +35,7 @@ Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name
 ||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
 ||Confirm resized server|实现空操作接口即可
 ||Revert resized server|不支持
-||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的location,带上{"type": "azure", "url": "snapshot-(snapshot.uuid).vhd"},将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"volume"这个storage container里.
+||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的properties,带上{"azure_type": "azure", "azure_uri": "snapshot-(snapshot.uuid).vhd", "azure_of_type": instance.os_type},将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"snapshots"这个storage container里.
 |Flavors|List flavors|compute driver管理不了,查询DB
 ||List details for flavors|compute driver管理不了,查询DB
 ||Get flavor details|compute driver管理不了,查询DB
