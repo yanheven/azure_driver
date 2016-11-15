@@ -3,6 +3,7 @@
 所有虚拟机创建在同一个resource group下面，暂定名为ops_resource_group, 包括后面的voluem也是这个resource group下，操作系统磁盘azure自动放在名为vhds的storage container里，网络和子网提前创建好，填写好flavor、image的映射。
 linux: boot from instance snapshot can't set adminpass and key. keys were keep from snapshot, password was erased.
 windows boot from instance snapshot scenario unknown.
+快照：通过VM创建镜像，删除镜像时，调用的原生glance接口，未能在azure上及时删除.每次创建快照时，都做一次残余快照清理。
 
 映射：
 Instance:  

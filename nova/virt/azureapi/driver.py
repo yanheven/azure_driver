@@ -270,7 +270,7 @@ class AzureDriver(driver.ComputeDriver):
             os_type = WINDOWS_OS
         else:
             raise Exception('Unabled to decide os type of instance.')
-        instance.os_type = os_type
+
         if os_type == LINUX_OS:
             if instance.get('key_data'):
                 key_data = str(instance.key_data)
@@ -289,6 +289,7 @@ class AzureDriver(driver.ComputeDriver):
                 os_profile['admin_password'] = admin_password
         else:
             os_profile['admin_password'] = admin_password
+        instance.os_type = os_type
         instance.save()
         return os_profile
 
@@ -590,9 +591,11 @@ class AzureDriver(driver.ComputeDriver):
     def snapshot(self, context, instance, image_id, update_task_state):
         # TODO when delete snapshot in glance, snapshot blob still in azure,
         # need add deleting zombied snapshot to periodic task.
+        self._cleanup_deleted_snapshots(context)
+
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         snapshot = self._image_api.get(context, image_id)
-        snapshot_name = 'snapshot-' + snapshot['id'] + VHD_EXT
+        snapshot_name = self._get_snapshot_blob_name_from_id(snapshot['id'])
         snapshot_url = self.blob.make_blob_url(SNAPSHOT_CONTAINER,
                                                snapshot_name)
         vm_osdisk_url = self.blob.make_blob_url(VHDS_CONTAINER,
@@ -647,3 +650,17 @@ class AzureDriver(driver.ComputeDriver):
 
     def delete_instance_files(self, instance):
         return self._cleanup_instance(instance)
+
+    def _get_snapshot_blob_name_from_id(self, id):
+        return 'snapshot-{}.{}'.format(id, VHD_EXT)
+
+    def _cleanup_deleted_snapshots(self, context):
+        images = self._image_api.get_all(context)
+        image_ids = [self._get_snapshot_blob_name_from_id(i['id'])
+                     for i in images]
+        snapshot_blobs = self.blob.list_blobs(SNAPSHOT_CONTAINER)
+        blob_ids = [i.name for i in snapshot_blobs]
+        zombied_ids = set(blob_ids) - set(image_ids)
+        for i in zombied_ids:
+            self.blob.delete_blob(SNAPSHOT_CONTAINER, i)
+            LOG.info('Delete zombied snapshot: {} blob in Azure'.format(i))
