@@ -246,3 +246,16 @@ Azure: page blog:{'name': 'volume-17d95073-1ab7-4906-9518-6e09312f1655.vhd', 'sn
 ||Show snapshot metadata|volume driver管理不了,查询DB
 ||Update snapshot metadata|volume driver管理不了,更新DB
 |Volume image metadata extension (os-vol-image-meta)|Show image metadata for volume|volume driver管理不了,查询DB
+
+###僵尸资源清理
+#### 1 虚拟机操作系统磁盘
+通常逻辑：创建虚拟机时，操作系统磁盘是跟随虚拟机一同创建，如果虚拟机创建失败，用户进行虚拟机删除操作，对磁盘进行删除。
+异常逻辑：删除磁盘blog操作是同步操作，如果删除失败，则manager会收到异常，不会造成僵尸磁盘。但为了azure绝对干净，定期对所有磁盘进行检查，如果是没连接到虚拟机的都进行删除操作。
+
+#### 2 虚拟机网卡
+通常逻辑：创建虚拟机时，先创建网卡，虚拟机创建操作是异常操作，所以无论虚拟机创建是否成功，网卡都已经创建好，这里无法做到及时删除。但用户进行虚拟机删除操作，对网卡进行删除。
+异常逻辑：定期对网卡进行检查，如果没有连接到虚拟机机都进行删除操作。
+
+#### 3 snapshot 虚拟机快照，实际在openstack处是image
+通常逻辑：直接进行删除操作，只在glance服务处删除，无法删除azure处的snapshot blob.现在思路是每次创建虚拟机快照时进行检查删除僵尸快照，因为要调用glance接口，需要context，无法在定期任务执行此操作。
+异常逻辑：暂时没想到怎样将它放到定期任务执行。
