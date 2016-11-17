@@ -34,12 +34,9 @@ CONF.register_opts(compute_opts, 'azure')
 class Azure(object):
 
     def __init__(self):
-        try:
-            credentials = UserPassCredentials(CONF.azure.username,
-                                              CONF.azure.password)
-            LOG.debug('Login with Azure username and password.')
-        except Exception:
-            raise Exception('Authenticate in Azure failed.')
+        credentials = UserPassCredentials(CONF.azure.username,
+                                          CONF.azure.password)
+        LOG.debug('Login with Azure username and password.')
         self.storage = StorageManagementClient(credentials,
                                                CONF.azure.subscription_id)
         account_keys = self.storage.storage_accounts.list_keys(

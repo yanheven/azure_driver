@@ -180,7 +180,7 @@ class AzureDriver(driver.VolumeDriver):
         self.blob.delete_blob(
             self.configuration.azure_storage_container_name,
             self._get_blob_name(snapshot['volume_name']),
-            snapshot=azure_snapshot_id, delete_snapshots='only'
+            snapshot=azure_snapshot_id
         )
         LOG.debug('Deleted Snapshot: {} in Azure.'.format(azure_snapshot_id))
 
