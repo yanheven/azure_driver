@@ -9,6 +9,8 @@ from cinder.volume import driver
 from cinder import exception
 from cinder.volume.drivers.azure import vhd_utils as azutils
 from cinder.volume.drivers.azure.adapter import Azure
+from azure.common import AzureMissingResourceHttpError
+from azure.common import AzureConflictHttpError
 
 LOG = logging.getLogger(__name__)
 
@@ -103,25 +105,22 @@ class AzureDriver(driver.VolumeDriver):
             raise Exception("Create Volume '{}' in Azure failed."
                             .format(volume.name))
         else:
-            LOG.debug("Calling Create Volume '%s' in Azure finish.", volume.name)
+            LOG.info("Created Volume '{}' in Azure."
+                      .format(volume.name))
 
     def delete_volume(self, volume):
         blob_name = self._get_blob_name(volume.name)
-        exists = self.blob.exists(
-            self.configuration.azure_storage_container_name,
-            blob_name
-        )
-
-        if not exists:
-            LOG.warn('Delete an Inexistent Volume: {} in Azure.'.
-                     format(blob_name))
-            return
-
-        LOG.debug("Calling Delete Volume '%s' in Azure ...", volume.name)
-        self.blob.delete_blob(
-            self.configuration.azure_storage_container_name,
-            blob_name, delete_snapshots='include')
-        LOG.debug("Delete Volume '%s' in Azure finish.", volume.name)
+        LOG.debug("Calling Delete Volume '{}' in Azure ..."
+                  .format(volume.name))
+        try:
+            self.blob.delete_blob(
+                self.configuration.azure_storage_container_name,
+                blob_name, delete_snapshots='include')
+        except AzureMissingResourceHttpError:
+            LOG.info('Volume blob: {} does not exist.'.format(volume.name))
+        else:
+            LOG.info("Delete Volume '{}' in Azure finish."
+                      .format(volume.name))
 
     def remove_export(self, context, volume):
         pass
@@ -160,29 +159,27 @@ class AzureDriver(driver.VolumeDriver):
             self._get_blob_name(snapshot['volume_name'])
         )
         azure_snapshot_id = snapshot_blob.snapshot
-        LOG.debug('Created Snapshot: {} in Azure.'.format(azure_snapshot_id))
+        LOG.info('Created Snapshot: {} in Azure.'.format(azure_snapshot_id))
         metadata = snapshot['metadata']
         metadata['azure_snapshot_id'] = azure_snapshot_id
         return dict(metadata=metadata)
 
     def delete_snapshot(self, snapshot):
         azure_snapshot_id = snapshot['metadata']['azure_snapshot_id']
-        exists = self.blob.exists(
-            self.configuration.azure_storage_container_name,
-            self._get_blob_name(snapshot['volume_name']),
-            snapshot=azure_snapshot_id
-        )
-        if not exists:
-            LOG.warn('Delete an Inexistent Snapshot: {} in Azure.'.
-                     format(azure_snapshot_id))
-            return
-
-        self.blob.delete_blob(
-            self.configuration.azure_storage_container_name,
-            self._get_blob_name(snapshot['volume_name']),
-            snapshot=azure_snapshot_id
-        )
-        LOG.debug('Deleted Snapshot: {} in Azure.'.format(azure_snapshot_id))
+        LOG.debug("Calling Delete Snapshot: {} in Azure."
+                  .format(azure_snapshot_id))
+        try:
+            self.blob.delete_blob(
+                self.configuration.azure_storage_container_name,
+                self._get_blob_name(snapshot['volume_name']),
+                snapshot=azure_snapshot_id
+            )
+        except AzureMissingResourceHttpError:
+            LOG.info('Snapshot blob: {} does not exist.'
+                     .format(azure_snapshot_id))
+        else:
+            LOG.info('Deleted Snapshot: {} in Azure.'
+                      .format(azure_snapshot_id))
 
     def create_volume_from_snapshot(self, volume, snapshot):
         blob_name = self._get_blob_name(volume.name)
@@ -230,7 +227,7 @@ class AzureDriver(driver.VolumeDriver):
                          format(blob_name, snapshot['volume_size'])))
             volume.update(dict(size=snapshot['volume_size']))
             volume.save()
-        LOG.debug('Create Volume from Snapshot: {} in '
+        LOG.info('Create Volume from Snapshot: {} in '
                   'Azure.'.format(azure_snapshot_id))
 
     def create_cloned_volume(self, volume, src_vref):
@@ -273,5 +270,5 @@ class AzureDriver(driver.VolumeDriver):
                          format(blob_name, src_vref['size'])))
             volume.update(dict(size=src_vref['size']))
             volume.save()
-        LOG.debug('Create Volume from Snapshot: {} in '
+        LOG.info('Create Volume from Snapshot: {} in '
                   'Azure.'.format(blob_name))

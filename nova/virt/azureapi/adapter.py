@@ -43,6 +43,10 @@ compute_opts = [
                help='Auzre Virtual Subnte ID'),
     cfg.StrOpt('vsubnet_name',
                help='Auzre Virtual Subnte Name'),
+    cfg.IntOpt('cleanup_span',
+               default=60,
+               help='Cleanup span in seconds to cleanup zombie resources'
+                    'in Azure.')
 ]
 
 CONF.register_opts(compute_opts, 'azure')
@@ -55,7 +59,7 @@ class Azure(object):
 
         credentials = UserPassCredentials(CONF.azure.username,
                                           CONF.azure.password)
-        LOG.debug('Login with Azure username and password.')
+        LOG.info('Login with Azure username and password.')
         self.resource = ResourceManagementClient(credentials,
                                                  CONF.azure.subscription_id)
         self.compute = ComputeManagementClient(credentials,
@@ -71,4 +75,4 @@ class Azure(object):
             account_name=CONF.azure.storage_account,
             account_key=key_str)
         self.blob = self.account.create_page_blob_service()
-        LOG.debug('Azure Management Clients Initialized')
+        LOG.info('Azure Management Clients Initialized')

@@ -36,7 +36,7 @@ class Azure(object):
     def __init__(self):
         credentials = UserPassCredentials(CONF.azure.username,
                                           CONF.azure.password)
-        LOG.debug('Login with Azure username and password.')
+        LOG.info('Login with Azure username and password.')
         self.storage = StorageManagementClient(credentials,
                                                CONF.azure.subscription_id)
         account_keys = self.storage.storage_accounts.list_keys(
@@ -46,4 +46,4 @@ class Azure(object):
             account_name=CONF.azure.storage_account,
             account_key=key_str)
         self.blob = self.account.create_page_blob_service()
-        LOG.debug('Azure Management Clients Initialized.')
+        LOG.info('Azure Management Clients Initialized.')

@@ -1,4 +1,5 @@
 import re
+import time
 
 from oslo_log import log as logging
 from oslo_service import loopingcall
@@ -56,6 +57,14 @@ class AzureDriver(driver.ComputeDriver):
         self._volume_api = cinder.API()
         self._image_api = image.API()
 
+        self.cleanup_time = time.time()
+        self.zombie_nics = []
+
+    def _get_blob_name(self, name):
+        """Get blob name from volume name
+        """
+        return '{}{}'.format(name, VHD_EXT)
+
     def _precreate_network(self):
         """Pre Create Network info in Azure.
         """
@@ -76,7 +85,7 @@ class AzureDriver(driver.ComputeDriver):
                 }
             )
             async_vnet_creation.wait()
-            LOG.debug("Create Network")
+            LOG.info("Create Network")
 
         # Create Subnet
         subnet_info = self.network.subnets.get(
@@ -93,19 +102,19 @@ class AzureDriver(driver.ComputeDriver):
             )
             subnet_info = async_subnet_creation.result()
         CONF.set_override('vsubnet_id', subnet_info.id, 'azure')
-        LOG.debug("Create/Update Subnet:{}".format(CONF.azure.vsubnet_id))
+        LOG.info("Create/Update Subnet:{}".format(CONF.azure.vsubnet_id))
 
     def init_host(self, host):
         self.resource.providers.register('Microsoft.Network')
-        LOG.debug("Register Microsoft.Network")
+        LOG.info("Register Microsoft.Network")
         self.resource.providers.register('Microsoft.Compute')
-        LOG.debug("Register Microsoft.Compute")
+        LOG.info("Register Microsoft.Compute")
         self.resource.providers.register('Microsoft.Storage')
-        LOG.debug("Register Microsoft.Storage")
+        LOG.info("Register Microsoft.Storage")
 
         self.resource.resource_groups.create_or_update(
             CONF.azure.resource_group, {'location': CONF.azure.location})
-        LOG.debug("Create/Update Resource Group")
+        LOG.info("Create/Update Resource Group")
         storage_async_operation = self.storage.storage_accounts.create(
             CONF.azure.resource_group,
             CONF.azure.storage_account,
@@ -116,14 +125,14 @@ class AzureDriver(driver.ComputeDriver):
             }
         )
         storage_async_operation.wait()
-        LOG.debug("Create/Update Storage Account")
+        LOG.info("Create/Update Storage Account")
 
         self.blob.create_container(SNAPSHOT_CONTAINER)
-        LOG.debug("Create/Update Storage Container: {}".
+        LOG.info("Create/Update Storage Container: {}".
                   format(SNAPSHOT_CONTAINER))
 
         self._precreate_network()
-        LOG.debug("Create/Update Ntwork and Subnet, Done.")
+        LOG.info("Create/Update Ntwork and Subnet, Done.")
 
     def get_host_ip_addr(self):
         return CONF.my_ip
@@ -138,18 +147,14 @@ class AzureDriver(driver.ComputeDriver):
         instances = []
         pages = self.compute.virtual_machines.list(CONF.azure.resource_group)
         for i in pages:
-            instances.append(i)
+            instances.append(i.name)
         return instances
 
     def list_instance_uuids(self):
         """Return the UUIDS of all the instances known to the virtualization
         layer, as a list. azure vm.name is vm.uuid in openstack.
         """
-        uuids = []
-        instances = self.list_instances()
-        for i in instances:
-            uuids.append(i.name)
-        return uuids
+        return self.list_instances()
 
     def get_info(self, instance):
         """Get the current status of an instance
@@ -164,6 +169,10 @@ class AzureDriver(driver.ComputeDriver):
         try:
             vm = self.compute.virtual_machines.get(
                 CONF.azure.resource_group, instance_id, expand='instanceView')
+        except exception.CloudError:
+            LOG.warn('Get instance info from Azure failed.{}'
+                     .format(exception.CloudError),instance=instance)
+        else:
             LOG.debug('vm info is: {}'.format(vm))
             if vm and vm.instance_view and vm.instance_view.statuses:
                 for i in vm.instance_view.statuses:
@@ -174,12 +183,16 @@ class AzureDriver(driver.ComputeDriver):
                         elif status in shutdown_staues:
                             state = power_state.SHUTDOWN
                         break
-            LOG.debug('vm: {} state is : {}'.format(instance_id, status))
-        except Exception as e:
-            LOG.warn('Get instance info from Azure failed.',instance=instance)
+            LOG.info('vm: {} state is : {}'.format(instance_id, status))
         return InstanceInfo(state=state, id=instance_id)
 
     def get_available_resource(self, nodename):
+        # delete zombied os disk blob
+        curent_time = time.time()
+        if curent_time - self.cleanup_time > CONF.azure.cleanup_span:
+            self.cleanup_time = curent_time
+            self._cleanup_deleted_os_disks()
+            self._cleanup_deleted_nics()
         usage_family = 'basicAFamily'
         page = self.compute.usage.list(CONF.azure.location)
         usages = [i for i in page]
@@ -234,7 +247,7 @@ class AzureDriver(driver.ComputeDriver):
             }
         )
         nic = async_nic_creation.result()
-        LOG.debug("Create a Nic:{}".format(nic.id))
+        LOG.info("Create a Nic:{}".format(nic.id))
         network_profile = {
                 'network_interfaces': [{
                     'id': nic.id,
@@ -254,7 +267,8 @@ class AzureDriver(driver.ComputeDriver):
         flavor_name = flavor.get('name')
         vm_size = constant.FLAVOR_MAPPING.get(flavor_name, None)
         if not vm_size:
-            raise exception.FlavorAzureMappingNotFound(flavor_name=flavor_name)
+            raise exception.FlavorAzureMappingNotFound(
+                flavor_name=flavor_name)
         LOG.debug("Get size mapping:{}".format(vm_size))
         return vm_size
 
@@ -323,7 +337,7 @@ class AzureDriver(driver.ComputeDriver):
             if image_properties['azure_type'] == AZURE \
                     and 'azure_uri' in image_properties \
                     and 'azure_os_type' in image_properties:
-                disk_name = instance.uuid + VHD_EXT
+                disk_name = self._get_blob_name(instance.uuid)
                 uri = image['properties']['azure_uri']
 
                 # copy image diskt to new disk for instance.
@@ -339,7 +353,7 @@ class AzureDriver(driver.ComputeDriver):
                                      " Azure.".format(disk_name)))
                         raise loopingcall.LoopingCallDone()
                     else:
-                        LOG.debug(
+                        LOG.info(
                             'copy os disk: {} in Azure Progress '
                             '{}'.format(disk_name,
                                         copy.properties.copy.progress))
@@ -364,7 +378,7 @@ class AzureDriver(driver.ComputeDriver):
         else:
             image_reference = self._get_image_from_mapping(image_meta) or None
             uri = self.blob.make_blob_url(
-                VHDS_CONTAINER, instance.uuid+VHD_EXT)
+                VHDS_CONTAINER, self._get_blob_name(instance.uuid))
             storage_profile = {
                 'image_reference': image_reference,
                 'os_disk': {
@@ -379,6 +393,9 @@ class AzureDriver(driver.ComputeDriver):
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
+        if not self._check_password(admin_password):
+            raise exception.PasswordInvalid(
+                instance_uuid=instance.uuid)
         instance_uuid = instance.uuid
         storage_profile = self._prepare_storage_profile(
             context, image_meta, instance)
@@ -393,20 +410,22 @@ class AzureDriver(driver.ComputeDriver):
             CONF.azure.resource_group, instance_uuid, vm_parameters)
         LOG.debug("Calling Create Instance in Azure ...", instance=instance)
         async_vm_action.wait()
-        LOG.debug("Create Instance in Azure Finish.", instance=instance)
-        # TODO DELETE NIC if create vm failed.
+        LOG.info("Create Instance in Azure Finish.", instance=instance)
 
     def _cleanup_instance(self, instance):
-        # 1 clean vhd
-        os_blob_name = instance.uuid + '.vhd'
-        self.blob.delete_blob(VHDS_CONTAINER, os_blob_name)
-        LOG.debug("Delete instance's Volume", instance=instance)
+        # 1 clean os disk vhd
+        os_blob_name = self._get_blob_name(instance.uuid)
+        try:
+            self.blob.delete_blob(VHDS_CONTAINER, os_blob_name)
+            LOG.info("Delete instance's Volume", instance=instance)
+        except exception.AzureMissingResourceHttpError:
+            LOG.info('os blob: {} does not exist.')
+        # 1 clean network interface
         async_vm_action = self.network.network_interfaces.delete(
             CONF.azure.resource_group, instance.uuid
         )
         async_vm_action.wait()
-        LOG.debug("Delete instance's Interface", instance=instance)
-        return True
+        LOG.info("Delete instance's Interface", instance=instance)
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
@@ -414,7 +433,7 @@ class AzureDriver(driver.ComputeDriver):
         async_vm_action = self.compute.virtual_machines.delete(
             CONF.azure.resource_group, instance.uuid)
         async_vm_action.wait()
-        LOG.debug("Delete Instance in Azure Finish.", instance=instance)
+        LOG.info("Delete Instance in Azure Finish.", instance=instance)
         self._cleanup_instance(instance)
         LOG.info("Delete and Clean Up Instance in Azure Finish.",
                  instance=instance)
@@ -424,20 +443,20 @@ class AzureDriver(driver.ComputeDriver):
         async_vm_action = self.compute.virtual_machines.restart(
             CONF.azure.resource_group, instance.uuid)
         async_vm_action.wait()
-        LOG.debug("Restart Instance in Azure Finish.", instance=instance)
+        LOG.info("Restart Instance in Azure Finish.", instance=instance)
 
     def power_off(self, instance, timeout=0, retry_interval=0):
         async_vm_action = self.compute.virtual_machines.power_off(
             CONF.azure.resource_group, instance.uuid)
         async_vm_action.wait()
-        LOG.debug("Power off Instance in Azure Finish.", instance=instance)
+        LOG.info("Power off Instance in Azure Finish.", instance=instance)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
         async_vm_action = self.compute.virtual_machines.start(
             CONF.azure.resource_group, instance.uuid)
         async_vm_action.wait()
-        LOG.debug("Power On Instance in Azure Finish.", instance=instance)
+        LOG.info("Power On Instance in Azure Finish.", instance=instance)
 
     def rebuild(self, context, instance, image_meta, injected_files,
                 admin_password, bdms, detach_block_devices,
@@ -448,7 +467,7 @@ class AzureDriver(driver.ComputeDriver):
             CONF.azure.resource_group, instance.uuid)
         LOG.debug("Calling Rebuild Instance in Azure ...", instance=instance)
         async_vm_action.wait()
-        LOG.debug("Rebuild Instance in Azure Finish.", instance=instance)
+        LOG.info("Rebuild Instance in Azure Finish.", instance=instance)
         instance.task_state = task_states.REBUILD_SPAWNING
         instance.save()
 
@@ -466,7 +485,7 @@ class AzureDriver(driver.ComputeDriver):
             if vm_size == i.name:
                 LOG.debug('Resize Instance, get new size', instance=instance)
                 return i.name
-        LOG.debug('Resize Instance, size invalid in Azure', instance=instance)
+        LOG.warn('Resize Instance, size invalid in Azure', instance=instance)
         raise exception.FlavorInvalid(
             flavor_name=instance.get_flavor(),
             instance_uuid = instance.uuid)
@@ -483,7 +502,7 @@ class AzureDriver(driver.ComputeDriver):
             CONF.azure.resource_group, instance.uuid, vm)
         LOG.debug("Calling Resize Instance in Azure ...", instance=instance)
         async_vm_action.wait()
-        LOG.debug("Resize Instance in Azure finish", instance=instance)
+        LOG.info("Resize Instance in Azure finish", instance=instance)
         return True
 
     def get_volume_connector(self, instance):
@@ -511,13 +530,12 @@ class AzureDriver(driver.ComputeDriver):
         vm = self.compute.virtual_machines.get(
             CONF.azure.resource_group, instance.uuid)
         vm.os_profile.admin_password = new_pass
-        LOG.debug(vm, instance=instance)
         async_vm_action = self.compute.virtual_machines.create_or_update(
             CONF.azure.resource_group, instance.uuid, vm)
         LOG.debug("Calling Reset Password of Instance in Azure ...",
                   instance=instance)
         async_vm_action.wait()
-        LOG.debug("Reset Password of Instance in Azure finish",
+        LOG.info("Reset Password of Instance in Azure finish",
                   instance=instance)
 
     def _check_password(self, password):
@@ -561,7 +579,7 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Calling Attach Volume to  Instance in Azure ...",
                   instance=instance)
         async_vm_action.wait()
-        LOG.debug("Attach Volume to Instance in Azure finish",
+        LOG.info("Attach Volume to Instance in Azure finish",
                   instance=instance)
 
     def detach_volume(self, connection_info, instance, mountpoint,
@@ -585,7 +603,7 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Calling Detach Volume to  Instance in Azure ...",
                   instance=instance)
         async_vm_action.wait()
-        LOG.debug("Detach Volume to Instance in Azure finish",
+        LOG.info("Detach Volume to Instance in Azure finish",
                   instance=instance)
 
     def snapshot(self, context, instance, image_id, update_task_state):
@@ -598,8 +616,8 @@ class AzureDriver(driver.ComputeDriver):
         snapshot_name = self._get_snapshot_blob_name_from_id(snapshot['id'])
         snapshot_url = self.blob.make_blob_url(SNAPSHOT_CONTAINER,
                                                snapshot_name)
-        vm_osdisk_url = self.blob.make_blob_url(VHDS_CONTAINER,
-                                                instance.uuid+VHD_EXT)
+        vm_osdisk_url = self.blob.make_blob_url(
+            VHDS_CONTAINER, self._get_blob_name(instance.uuid))
         metadata = {'is_public': False,
                     'status': 'active',
                     'name': snapshot_name,
@@ -616,10 +634,10 @@ class AzureDriver(driver.ComputeDriver):
                                    }
                     }
         self._image_api.update(context, image_id, metadata, 'Azure image')
-        LOG.debug("Update image for snapshot image.", instance=instance)
+        LOG.info("Update image for snapshot image.", instance=instance)
 
         self.blob.copy_blob(SNAPSHOT_CONTAINER, snapshot_name, vm_osdisk_url)
-        LOG.debug("Calling copy os disk in Azure...",
+        LOG.info("Calling copy os disk in Azure...",
                   insget_available_nodestance=instance)
         update_task_state(task_state=task_states.IMAGE_UPLOADING,
                           expected_state=task_states.IMAGE_PENDING_UPLOAD)
@@ -641,7 +659,7 @@ class AzureDriver(driver.ComputeDriver):
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
         timer.start(interval=0.5).wait()
 
-        LOG.debug('Created Image from Instance: {} in Azure'
+        LOG.info('Created Image from Instance: {} in Azure'
                   '.'.format(instance.uuid))
 
     def resume_state_on_host_boot(self, context, instance, network_info,
@@ -649,7 +667,8 @@ class AzureDriver(driver.ComputeDriver):
         pass
 
     def delete_instance_files(self, instance):
-        return self._cleanup_instance(instance)
+        self._cleanup_instance(instance)
+        return True
 
     def _get_snapshot_blob_name_from_id(self, id):
         return 'snapshot-{}.{}'.format(id, VHD_EXT)
@@ -663,4 +682,28 @@ class AzureDriver(driver.ComputeDriver):
         zombied_ids = set(blob_ids) - set(image_ids)
         for i in zombied_ids:
             self.blob.delete_blob(SNAPSHOT_CONTAINER, i)
-            LOG.info('Delete zombied snapshot: {} blob in Azure'.format(i))
+            LOG.info('Delete zombie snapshot: {} blob in Azure'.format(i))
+
+    def _cleanup_deleted_nics(self):
+        nics = self.network.network_interfaces.list(CONF.azure.resource_group)
+        zombie_ids = [i.name for i in nics if not i.virtual_machine]
+        to_delete_ids = set(self.zombie_nics) & set(zombie_ids)
+        self.zombie_nics = set(zombie_ids) - set(to_delete_ids)
+        for i in to_delete_ids:
+            self.network.network_interfaces.delete(
+                CONF.azure.resource_group, i
+            )
+            LOG.info('Delete zombie Nic: {} in Azure'.format(i))
+
+    def _cleanup_deleted_os_disks(self):
+        blobs = self.blob.list_blobs(VHDS_CONTAINER)
+        for i in blobs:
+            if 'unlocked' == i.properties.lease.status \
+                    and 'available' == i.properties.lease.state \
+                    and VHD_EXT in i.name:
+                try:
+                    self.blob.delete_blob(VHDS_CONTAINER, i.name)
+                    LOG.info('Delete zombie os disk: {} blob in Azure'
+                             .format(i.name))
+                except exception.AzureMissingResourceHttpError:
+                    LOG.info('os blob: {} does not exist.')
