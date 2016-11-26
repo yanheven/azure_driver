@@ -55,24 +55,27 @@ CONF.register_opts(compute_opts, 'azure')
 
 class Azure(object):
 
-    def __init__(self):
+    def __init__(self, username=CONF.azure.username,
+                 password=CONF.azure.password,
+                 subscription_id=CONF.azure.subscription_id,
+                 resource_group=CONF.azure.resource_group,
+                 storage_account=CONF.azure.storage_account):
 
-        credentials = UserPassCredentials(CONF.azure.username,
-                                          CONF.azure.password)
+        credentials = UserPassCredentials(username, password)
         LOG.info('Login with Azure username and password.')
         self.resource = ResourceManagementClient(credentials,
-                                                 CONF.azure.subscription_id)
+                                                 subscription_id)
         self.compute = ComputeManagementClient(credentials,
-                                               CONF.azure.subscription_id)
+                                               subscription_id)
         self.storage = StorageManagementClient(credentials,
-                                               CONF.azure.subscription_id)
+                                               subscription_id)
         self.network = NetworkManagementClient(credentials,
-                                               CONF.azure.subscription_id)
+                                               subscription_id)
         account_keys = self.storage.storage_accounts.list_keys(
-            CONF.azure.resource_group, CONF.azure.storage_account)
+            resource_group, storage_account)
         key_str = account_keys.keys[0].value
         self.account = CloudStorageAccount(
-            account_name=CONF.azure.storage_account,
+            account_name=storage_account,
             account_key=key_str)
         self.blob = self.account.create_page_blob_service()
         LOG.info('Azure Management Clients Initialized')
