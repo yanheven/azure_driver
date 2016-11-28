@@ -1,0 +1,40 @@
+# 1 nova
+```
+Name                                  Stmts   Miss  Cover
+---------------------------------------------------------
+nova/virt/azureapi/__init__.py            2      0   100%
+nova/virt/azureapi/adapter.py            27      0   100%
+nova/virt/azureapi/conf/__init__.py       0      0   100%
+nova/virt/azureapi/conf/azureapi.py       9      9     0%
+nova/virt/azureapi/constant.py            4      0   100%
+nova/virt/azureapi/driver.py            595     62    90%
+nova/virt/azureapi/exception.py          56      0   100%
+---------------------------------------------------------
+TOTAL                                   693     71    90%
+```
+
+# 2 cinder-volume
+```
+Name                                       Stmts   Miss  Cover
+--------------------------------------------------------------
+cinder/volume/drivers/azure/__init__.py        0      0   100%
+cinder/volume/drivers/azure/adapter.py        20      0   100%
+cinder/volume/drivers/azure/driver.py        181     37    80%
+cinder/volume/drivers/azure/vhd_utils.py      27      0   100%
+--------------------------------------------------------------
+TOTAL                                        228     37    84%
+--------------------------------------------------------------
+```
+
+# 3 cinder-backup
+```
+Name                                       Stmts   Miss  Cover
+--------------------------------------------------------------
+cinder/volume/drivers/azure/__init__.py        0      0   100%
+cinder/volume/drivers/azure/adapter.py        20      0   100%
+cinder/volume/drivers/azure/driver.py        181     37    80%
+cinder/volume/drivers/azure/vhd_utils.py      27      0   100%
+--------------------------------------------------------------
+TOTAL                                        228     37    84%
+--------------------------------------------------------------
+```
