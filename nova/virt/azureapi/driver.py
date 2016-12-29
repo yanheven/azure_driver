@@ -21,7 +21,6 @@ from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_mode
 from nova import conf
-from nova import context
 from nova import exception as nova_ex
 from nova import image
 from nova.i18n import _LW, _LE, _LI
@@ -93,7 +92,7 @@ class AzureDriver(driver.ComputeDriver):
         # check cidr format
         net_cidr = CONF.azure.vnet_cidr
         subnet_cidr = CONF.azure.vsubnet_cidr
-        if not (netutils.is_valid_cidr(net_cidr) or
+        if not (netutils.is_valid_cidr(net_cidr) and
                 netutils.is_valid_cidr(subnet_cidr)):
             msg = 'Invalid network: %(net_cidr)s/subnet: %(subnet_cidr)s' \
                   ' CIDR' % dict(net_cidr=net_cidr, subnet_cidr=subnet_cidr)
@@ -101,10 +100,14 @@ class AzureDriver(driver.ComputeDriver):
             raise exception.NetworkCreateFailure(reason=msg)
         # Creaet Network
         try:
-            net_info = self.network.virtual_networks.get(
-                CONF.azure.resource_group,
-                CONF.azure.vnet_name)
-            if not net_info:
+            nets = self.network.virtual_networks.list(
+                CONF.azure.resource_group)
+            net_exist = False
+            for i in nets:
+                if i.name == CONF.azure.vnet_name:
+                    net_exist = True
+                    break
+            if not net_exist:
                 network_info = dict(location=CONF.azure.location,
                                     address_space=dict(
                                         address_prefixes=[net_cidr]))
@@ -123,12 +126,18 @@ class AzureDriver(driver.ComputeDriver):
 
         # Create Subnet
         try:
-            subnet_info = self.network.subnets.get(
+            # subnet can't recreate, check existing before create.
+            subnets = self.network.subnets.list(
                 CONF.azure.resource_group,
-                CONF.azure.vnet_name,
-                CONF.azure.vsubnet_name,)
-            if not subnet_info:
-                # subnet can't recreate, check existing before create.
+                CONF.azure.vnet_name)
+            subnet_exist = False
+            subnet_details = None
+            for i in subnets:
+                if i.name == CONF.azure.vsubnet_name:
+                    subnet_exist = True
+                    subnet_details = i
+                    break
+            if not subnet_exist:
                 subnet_info = {'address_prefix': subnet_cidr}
                 async_subnet_creation = self.network.subnets.create_or_update(
                     CONF.azure.resource_group,
@@ -136,7 +145,7 @@ class AzureDriver(driver.ComputeDriver):
                     CONF.azure.vsubnet_name,
                     subnet_info
                 )
-                subnet_info = async_subnet_creation.result()
+                subnet_details = async_subnet_creation.result()
         except Exception as e:
             # delete network if subnet create fail.
             try:
@@ -152,7 +161,7 @@ class AzureDriver(driver.ComputeDriver):
             ex = exception.SubnetCreateFailure(reason=msg)
             LOG.exception(msg)
             raise ex
-        CONF.set_override('vsubnet_id', subnet_info.id, 'azure')
+        CONF.set_override('vsubnet_id', subnet_details.id, 'azure')
         LOG.info(_LI("Create/Update Subnet: %s"), CONF.azure.vsubnet_id)
 
     def init_host(self, host):
@@ -219,7 +228,7 @@ class AzureDriver(driver.ComputeDriver):
         return CONF.my_ip
 
     def get_available_nodes(self, refresh=False):
-        return 'azure-{}'.format(CONF.azure.location)
+        return ['azure-{}'.format(CONF.azure.location)]
 
     def list_instances(self):
         """Return the names of all the instances known to the virtualization
@@ -295,8 +304,6 @@ class AzureDriver(driver.ComputeDriver):
             self.cleanup_time = curent_time
             self._cleanup_deleted_os_disks()
             self._cleanup_deleted_nics()
-            # need add deleting residual snapshot to periodic task.
-            self._cleanup_deleted_snapshots(context.get_admin_context())
         usage_family = 'basicAFamily'
         try:
             page = self.compute.usage.list(CONF.azure.location)
@@ -863,6 +870,8 @@ class AzureDriver(driver.ComputeDriver):
     def snapshot(self, context, instance, image_id, update_task_state):
         # TODO(haifeng) when delete snapshot in glance, snapshot blob still
         # in azure
+        # delete residual snapshots
+        self._cleanup_deleted_snapshots(context)
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         snapshot = self._image_api.get(context, image_id)
         snapshot_name = self._get_snapshot_blob_name_from_id(snapshot['id'])
