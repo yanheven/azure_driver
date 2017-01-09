@@ -881,7 +881,7 @@ class AzureDriver(driver.ComputeDriver):
             VHDS_CONTAINER, self._get_blob_name(instance.uuid))
         metadata = {'is_public': False,
                     'status': 'active',
-                    'name': snapshot_name,
+                    'name': snapshot['name'],
                     'disk_format': 'vhd',
                     'container_format': 'bare',
                     'properties': {'azure_type': AZURE,
@@ -1016,7 +1016,11 @@ class AzureDriver(driver.ComputeDriver):
             LOG.warning(_LW("Unabled to delete disks"
                             " in Azure because %(reason)s"),
                         dict(reason=six.text_type(e)))
+            return
         # blobs is and iterable obj, although it's empty.
+        if not blobs:
+            LOG.info(_LI('No residual Blob in Azure'))
+            return
         for i in blobs:
             if 'unlocked' == i.properties.lease.status \
                     and 'available' == i.properties.lease.state \

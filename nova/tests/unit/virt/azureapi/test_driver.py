@@ -851,7 +851,8 @@ class AzureDriverTestCase(test.NoDBTestCase):
                        lambda a: FakeLoopingCall(a))
         update_stask = mock.Mock()
         image_id = 'image_id'
-        self.drvr._image_api.get.return_value = dict(id=image_id)
+        name = 'snap-name'
+        self.drvr._image_api.get.return_value = dict(id=image_id, name='name')
         self.drvr.blob.make_blob_url = lambda x, y: y
         self.drvr._get_snapshot_blob_name_from_id = lambda x: x
         self.drvr._get_blob_name = lambda x: x
