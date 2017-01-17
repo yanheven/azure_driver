@@ -11,13 +11,20 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-# keys from openstack image name, values from azure image marketplace.
+# keys from openstack image name, values from azure image marketplace or
+# customized image uri.
 IMAGE_MAPPING = {
     'cirros-0.3.4-x86_64-uec': {
         'publisher': 'Canonical',
         'offer': 'UbuntuServer',
         'sku': '16.04.0-LTS',
         'version': 'latest'
+    },
+    'cirros-0.3.4-x86_64-vhd': {
+        'uri': 'https://ops0storage0account.blob.core.windows.net/images/'
+               'a1e8409b-537b-4eb2-a9be-4e6c7d1f4686.vhd',
+        # os_type could be linux or windows
+        'os_type': 'linux',
     }
 }
 """

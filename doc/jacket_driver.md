@@ -10,6 +10,9 @@ windows boot from instance snapshot scenario unknown.
 Instance:  
 Openstack instance: {'uuid': '21b87391-a91e-4ad0-8bac-855271af61fd', 'name': 'azure13'}  
 Azure instance: {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}, os_disk {'name': '21b87391-a91e-4ad0-8bac-855271af61fd.vhd'}, interface {'name': '21b87391-a91e-4ad0-8bac-855271af61fd'}
+Image:
+Openstack image: {'id': '21b87391-a91e-4ad0-8bac-855271af61fd', 'name': 'azure13'}  
+Azure image blob: {'os_type': 'linux(or windows...)', 'uri': 'image-21b87391-a91e-4ad0-8bac-855271af61fd.vhd'}
 
 |Category|API|Azure
 |:--|:--|:--

@@ -67,7 +67,7 @@ Azure api: Copy Blob
 
 ####17 copy_image_to_volume
 Azure api: Copy Blob  
-实现细节: 由于VHD特殊格式原因,无法把glance里面的image与azure里面的blob对接
+实现细节: 全部放到clone_image实现,不用到这一步实现
 
 ####18 validate_connector
 Azure api:  无  
@@ -75,4 +75,5 @@ Azure api:  无
 
 ####19 clone_image
 Azure api: Copy Blob  
-实现细节: 本身azure里面的blog 就跟image存储性质一样,是page blob,所以无须作另外工作,参考clone volume.
+实现细节: 镜像提前上传到azure上,名为images的container里面,命名规则为"image-{image_id}.vhd",
+创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.
