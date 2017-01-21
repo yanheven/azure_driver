@@ -105,10 +105,12 @@ class AzureDriver(driver.VolumeDriver):
         """Get blob name from volume name"""
         return '{}.{}'.format(name, VHD_EXT)
 
-    def _copy_blob(self, blob_name, source_uri):
+    def _copy_blob(self, blob_name, source_uri, container_name=None):
+        if not container_name:
+            container_name = self.configuration.azure_storage_container_name
         try:
             self.blob.copy_blob(
-                self.configuration.azure_storage_container_name,
+                container_name,
                 blob_name, source_uri)
         except Exception as e:
             message = (_("Copy blob %(blob_name)s from %(source_uri)s in Azure"
@@ -222,7 +224,8 @@ class AzureDriver(driver.VolumeDriver):
                      'vhd_uri': vhd_uri,
                      'vhd_size_gb': volume.size,
                      'vhd_name': volume.name,
-                     'device_path': None
+                     'device_path': None,
+                     'os_type': volume.metadata.get('os_type')
                      }
         }
         return connection_info
@@ -371,6 +374,15 @@ class AzureDriver(driver.VolumeDriver):
     def clone_image(self, context, volume,
                     image_location, image_meta,
                     image_service):
+
+        # image to create volume must has os_type property.
+        os_type = image_meta['properties'].get('os_type')
+        if not os_type:
+            message = (_("Create Volume from Image %(image_id)s in Azure"
+                         " failed. reason: image miss os_type property.")
+                       % dict(snapshop=image_meta['id']))
+            LOG.exception(message)
+            raise exception.VolumeBackendAPIException(data=message)
         image_blob = IMAGE_PREFIX + '-' + image_meta['id']
         src_blob_name = self._get_blob_name(image_blob)
         exists = self._check_exist(
@@ -417,4 +429,50 @@ class AzureDriver(driver.VolumeDriver):
                              image_size=image_size))
             volume.update(dict(size=image_size))
             volume.save()
-        return None, True
+
+        metadata = volume['metadata']
+        print(type(volume), volume)
+        metadata['os_type'] = os_type
+        return {'metadata': metadata}, True
+
+    def copy_volume_to_image(self, context, volume, image_service, image_meta):
+        """Copy the volume to the specified image.
+
+        copy volume blob to image blob in azure.
+        """
+
+        image_blob = IMAGE_PREFIX + '-' + image_meta['id']
+        src_blob_name = self._get_blob_name(volume['name'])
+        exists = self._check_exist(
+            src_blob_name,
+            container_name=self.configuration.azure_storage_container_name)
+        if not exists:
+            LOG.warning(_LW('Copy an Inexistent Volume: %s in '
+                            'Azure.'), src_blob_name)
+            raise exception.VolumeNotFound(volume_id=volume['id'])
+
+        blob_name = self._get_blob_name(image_blob)
+        src_blob_uri = self.blob.make_blob_url(
+            self.configuration.azure_storage_container_name, src_blob_name)
+        self._copy_blob(blob_name, src_blob_uri,
+                        self.configuration.azure_image_container_name)
+
+        def _wait_for_copy():
+            """Called at an copy until finish."""
+            copy = self.blob.get_blob_properties(
+                self.configuration.azure_image_container_name,
+                blob_name)
+            state = copy.properties.copy.status
+
+            if state == 'success':
+                LOG.info(_LI("Copy Volume to Image: %s in "
+                             "Azure."), blob_name)
+                raise loopingcall.LoopingCallDone()
+            else:
+                LOG.debug('Copy Volume to Image: %(blob_name)s'
+                          ' in Azure Progress %(progress)s' %
+                          dict(blob_name=blob_name,
+                               progress=copy.properties.copy.progress))
+
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+        timer.start(interval=0.5).wait()

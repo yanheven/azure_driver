@@ -474,83 +474,108 @@ class AzureDriver(driver.ComputeDriver):
         LOG.debug("Create vm parameters:{}".format(vm_parameters))
         return vm_parameters
 
-    def _prepare_storage_profile(self, context, image_meta, instance):
-        image = self._image_api.get(context, image_meta.id)
-        image_properties = image.get('properties', None)
-
-        # boot from azure export images.
-        if image_properties and 'azure_type' in image_properties:
-            # check image properties for azure export image
-            if image_properties['azure_type'] == AZURE \
-                    and 'azure_uri' in image_properties \
-                    and 'azure_os_type' in image_properties:
-                disk_name = self._get_blob_name(instance.uuid)
-                uri = image['properties']['azure_uri']
-
-                # copy image diskt to new disk for instance.
-                self._copy_blob(VHDS_CONTAINER, disk_name, uri)
-
-                def _wait_for_copy():
-                    """Called at an copy until finish."""
-                    copy = self.blob.get_blob_properties(
-                        VHDS_CONTAINER, disk_name)
-                    state = copy.properties.copy.status
-                    if state == 'success':
-                        LOG.info(_LI("Copied image disk to new blob: %s in"
-                                     " Azure."), disk_name)
-                        raise loopingcall.LoopingCallDone()
-                    else:
-                        LOG.info(_LI(
-                            'copy os disk: %(disk)s in Azure Progress '
-                            '%(progress)s'),
-                            dict(disk=disk_name,
-                                 progress=copy.properties.copy.progress))
-
-                timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
-                timer.start(interval=0.5).wait()
-
-                disk_uri = self.blob.make_blob_url(VHDS_CONTAINER, disk_name)
-                storage_profile = {
-                    'os_disk': {
-                        'name': instance.uuid,
-                        'caching': 'None',
-                        'create_option': 'attach',
-                        'vhd': {'uri': disk_uri},
-                        'os_type': image_properties['azure_os_type']
-                    }
-                }
-            else:
-                ex = nova_ex.ImageUnacceptable(
-                    image_id=image['id'],
-                    reason='Wrong parameters os Azure crated image!')
-                msg = six.text_type(ex)
-                LOG.exception(msg)
-                raise ex
-
-        # boot from normal openstack images, mapping to  azure marketplace or
-        # customized image, which has been uploaded to azure.
-        else:
-            image_reference = self._get_image_from_mapping(image_meta)
-            uri = self.blob.make_blob_url(
-                VHDS_CONTAINER, self._get_blob_name(instance.uuid))
+    def _prepare_storage_profile(self, context, image_meta,
+                                 instance, block_device_info):
+        # case1 boot from volume(or boot from image to volume).
+        if not instance.get('image_ref'):
+            LOG.debug("case1 boot from volume.")
+            device_mapping = driver.block_device_info_get_mapping(
+                block_device_info)
+            uri = device_mapping[0]['connection_info']['data']['vhd_uri']
+            os_type = \
+                device_mapping[0]['connection_info']['data']['os_type']
             storage_profile = {
                 'os_disk': {
                     'name': instance.uuid,
                     'caching': 'None',
-                    'create_option': 'fromImage',
-                    'vhd': {'uri': uri}
+                    'create_option': 'attach',
+                    'vhd': {'uri': uri},
+                    'os_type': os_type
                 }
             }
+        else:
+            LOG.debug("case2/3/4 boot from image.")
+            image = self._image_api.get(context, image_meta.id)
+            image_properties = image.get('properties', None)
 
-            # customized images
-            if 'uri' in image_reference:
-                storage_profile['image'] = {
-                    'uri': image_reference['uri']
-                }
-                storage_profile['os_type'] = image_reference['os_type']
-            # azure marketplace images
+            # case2 boot from azure export images.
+            if image_properties and 'azure_type' in image_properties:
+                # check image properties for azure export image
+                if image_properties['azure_type'] == AZURE \
+                        and 'azure_uri' in image_properties \
+                        and 'azure_os_type' in image_properties:
+                    LOG.debug("case2 boot from export images.")
+                    disk_name = self._get_blob_name(instance.uuid)
+                    uri = image['properties']['azure_uri']
+
+                    # copy image diskt to new disk for instance.
+                    self._copy_blob(VHDS_CONTAINER, disk_name, uri)
+
+                    def _wait_for_copy():
+                        """Called at an copy until finish."""
+                        copy = self.blob.get_blob_properties(
+                            VHDS_CONTAINER, disk_name)
+                        state = copy.properties.copy.status
+                        if state == 'success':
+                            LOG.info(_LI("Copied image disk to new blob: %s in"
+                                         " Azure."), disk_name)
+                            raise loopingcall.LoopingCallDone()
+                        else:
+                            LOG.info(_LI(
+                                'copy os disk: %(disk)s in Azure Progress '
+                                '%(progress)s'),
+                                dict(disk=disk_name,
+                                     progress=copy.properties.copy.progress))
+
+                    timer = \
+                        loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+                    timer.start(interval=0.5).wait()
+
+                    disk_uri = \
+                        self.blob.make_blob_url(VHDS_CONTAINER, disk_name)
+                    storage_profile = {
+                        'os_disk': {
+                            'name': instance.uuid,
+                            'caching': 'None',
+                            'create_option': 'attach',
+                            'vhd': {'uri': disk_uri},
+                            'os_type': image_properties['azure_os_type']
+                        }
+                    }
+                else:
+                    ex = nova_ex.ImageUnacceptable(
+                        image_id=image['id'],
+                        reason='Wrong parameters os Azure crated image!')
+                    msg = six.text_type(ex)
+                    LOG.exception(msg)
+                    raise ex
+
+            # boot from normal openstack images, mapping to  azure marketplace
+            #  or customized image, which has been uploaded to azure.
             else:
-                storage_profile['image_reference'] = image_reference
+                image_reference = self._get_image_from_mapping(image_meta)
+                uri = self.blob.make_blob_url(
+                    VHDS_CONTAINER, self._get_blob_name(instance.uuid))
+                storage_profile = {
+                    'os_disk': {
+                        'name': instance.uuid,
+                        'caching': 'None',
+                        'create_option': 'fromImage',
+                        'vhd': {'uri': uri}
+                    }
+                }
+
+                # case3 boot from customized images
+                if 'uri' in image_reference:
+                    LOG.debug("case3 boot from customized images.")
+                    storage_profile['image'] = {
+                        'uri': image_reference['uri']
+                    }
+                    storage_profile['os_type'] = image_reference['os_type']
+                # case4 boot from azure marketplace images
+                else:
+                    LOG.debug("case4 boot from marketplace images.")
+                    storage_profile['image_reference'] = image_reference
 
         return storage_profile
 
@@ -563,9 +588,22 @@ class AzureDriver(driver.ComputeDriver):
             msg = "Block device information present: %s" % block_device_info
             LOG.debug(msg, instance=instance)
 
+            root_device_name = block_device_info.get('root_device_name')
             for disk in block_device_mapping:
                 connection_info = disk['connection_info']
-                self.attach_volume(context, connection_info, instance, None)
+                # if non root device, do attach. root device will automatic
+                # attach when boot.
+                if root_device_name != disk['mount_device']:
+                    self.attach_volume(context, connection_info,
+                                       instance, None)
+
+    def _is_booted_from_volume(self, instance, disk_mapping=None):
+        """Determines whether the VM is booting from volume
+
+        Determines whether the disk mapping indicates that the VM
+        is booting from a volume.
+        """
+        return not bool(instance.get('image_ref'))
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -579,7 +617,7 @@ class AzureDriver(driver.ComputeDriver):
             vm_size = self._get_size_from_flavor(instance.get_flavor())
             network_profile = self._prepare_network_profile(instance_uuid)
             storage_profile = self._prepare_storage_profile(
-                context, image_meta, instance)
+                context, image_meta, instance, block_device_info)
             os_profile = self._prepare_os_profile(
                 instance, storage_profile, admin_password)
             vm_parameters = self._create_vm_parameters(
@@ -831,7 +869,6 @@ class AzureDriver(driver.ComputeDriver):
         # nothing need to do with volume
         props = dict()
         props['platform'] = 'azure'
-        props['os_type'] = 'azure'
         props['ip'] = CONF.my_ip
         props['host'] = CONF.host
         return props

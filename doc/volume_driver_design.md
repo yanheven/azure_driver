@@ -23,7 +23,7 @@ AAzure api: Copy Blob
 
 ####6 extend_volume
 Azure api: Put Page  
-实现细节: 获得调整后大小,传递给azure更新blob的content_length.
+实现细节: 需要调整VHD文件大小,对VHD文件格式部分进行修改,这个流程很复杂,暂时不实现.
 
 ####7 delete_volume
 Azure api: Put Page  
@@ -63,7 +63,8 @@ Azure api: 无
 
 ####16 copy_volume_to_image
 Azure api: Copy Blob  
-实现细节: 由于VHD特殊格式原因,无法把glance里面的image与azure里面的blob对接
+实现细节: 直接把volume所在的blob进行复制到image blob, 命名规则按images命名规则来.
+复制卷到镜像,不能指定镜像格式等属性,只能与卷完全一样.
 
 ####17 copy_image_to_volume
 Azure api: Copy Blob  
@@ -76,4 +77,12 @@ Azure api:  无
 ####19 clone_image
 Azure api: Copy Blob  
 实现细节: 镜像提前上传到azure上,名为images的container里面,命名规则为"image-{image_id}.vhd",
+<<<<<<< HEAD
 创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.
+=======
+创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.在openstack里面的镜像要添加os_type到其property里面,
+创建卷时会读取这个值,将来通过卷创建虚拟机时要用到.
+
+####20 retype
+azure没有相关的接口来更改卷的属性,不实现.
+>>>>>>> 022a221... 1, Fix get_info and boot with blok_device_mapping

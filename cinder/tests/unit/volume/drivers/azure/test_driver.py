@@ -30,8 +30,11 @@ class FakeLoopingCall(object):
 
 class FakeObj(object):
 
-    def __getitem__(self, item):
-        self.__getattribute__(item)
+    def __getitem__(self, name):
+        return getattr(self, name)
+
+    def __setitem__(self, name, value):
+        setattr(self, name, value)
 
 
 @ddt.ddt
@@ -52,10 +55,12 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
         self.fake_vol.name = 'vol_name'
         self.fake_vol.id = 'vol_id'
         self.fake_vol.size = 1
+        self.fake_vol.metadata = dict(os_type='fake_type')
         self.fake_snap = dict(
             name='snap_name',
             id='snap_id',
             volume_name='vol_name',
+            properties=dict(os_type='linux'),
             metadata=dict(azure_snapshot_id='snap_id'))
         self.stubs.Set(loopingcall, 'FixedIntervalLoopingCall',
                        lambda a: FakeLoopingCall(a))
@@ -268,3 +273,23 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
         self.fake_vol.update.assert_called_once_with(
             dict(size=size))
         self.fake_vol.save.assert_called_once()
+
+    @mock.patch.object(cinder.volume.drivers.azure.driver.AzureDriver,
+                       '_check_exist')
+    def test_copy_volume_to_image_miss(self, mo_exit):
+        # non exist volume, raise not found
+        mo_exit.return_value = False
+        self.assertRaises(
+            exception.VolumeNotFound,
+            self.driver.copy_volume_to_image,
+            self.context, self.fake_vol, '', self.fake_snap)
+
+    @mock.patch.object(cinder.volume.drivers.azure.driver.AzureDriver,
+                       '_check_exist')
+    def test_copy_volume_to_image(self, mo_exit):
+        mo_exit.return_value = True
+        self.driver._copy_blob = mock.Mock()
+        self.fake_vol.size = 2
+        self.driver.copy_volume_to_image(self.context, self.fake_vol, '',
+                                         self.fake_snap)
+        self.driver._copy_blob.assert_called()

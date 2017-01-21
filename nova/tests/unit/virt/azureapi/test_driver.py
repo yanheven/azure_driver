@@ -466,7 +466,7 @@ class AzureDriverTestCase(test.NoDBTestCase):
         blob.properties.copy.status = 'pending'
         self.drvr.blob.get_blob_properties.return_value = blob
         storage_profile = self.drvr._prepare_storage_profile(
-            self.context, image_meta, self.fake_instance)
+            self.context, image_meta, self.fake_instance, None)
         blob.properties.copy.status = 'success'
         self.assertIn('os_type', storage_profile['os_disk'])
         mock_copy_blob.assert_called()
@@ -488,7 +488,7 @@ class AzureDriverTestCase(test.NoDBTestCase):
         self.assertRaises(
             nova_ex.ImageUnacceptable,
             self.drvr._prepare_storage_profile,
-            *(self.context, image_meta, self.fake_instance))
+            *(self.context, image_meta, self.fake_instance, None))
 
     @mock.patch.object(AzureDriver, '_copy_blob')
     @mock.patch.object(AzureDriver, '_get_image_from_mapping')
@@ -502,7 +502,7 @@ class AzureDriverTestCase(test.NoDBTestCase):
         self.drvr._image_api.get.return_value = image
         # boot from normal openstack images
         storage_profile = self.drvr._prepare_storage_profile(
-            self.context, image_meta, self.fake_instance)
+            self.context, image_meta, self.fake_instance, '')
         self.assertIn('image_reference', storage_profile)
         self.assertNotIn('os_type', storage_profile['os_disk'])
         self.assertEqual(1, mock_image_mapping.call_count)
