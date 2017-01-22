@@ -484,13 +484,15 @@ class AzureDriver(driver.ComputeDriver):
             uri = device_mapping[0]['connection_info']['data']['vhd_uri']
             os_type = \
                 device_mapping[0]['connection_info']['data']['os_type']
+            disk_size_gb = instance.flavor.root_gb
             storage_profile = {
                 'os_disk': {
                     'name': instance.uuid,
                     'caching': 'None',
                     'create_option': 'attach',
                     'vhd': {'uri': uri},
-                    'os_type': os_type
+                    'os_type': os_type,
+                    'disk_size_gb': disk_size_gb
                 }
             }
         else:
