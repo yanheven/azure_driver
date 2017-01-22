@@ -431,7 +431,6 @@ class AzureDriver(driver.VolumeDriver):
             volume.save()
 
         metadata = volume['metadata']
-        print(type(volume), volume)
         metadata['os_type'] = os_type
         return {'metadata': metadata}, True
 

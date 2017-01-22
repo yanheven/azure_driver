@@ -77,12 +77,9 @@ Azure api:  无
 ####19 clone_image
 Azure api: Copy Blob  
 实现细节: 镜像提前上传到azure上,名为images的container里面,命名规则为"image-{image_id}.vhd",
-<<<<<<< HEAD
-创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.
-=======
+
 创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.在openstack里面的镜像要添加os_type到其property里面,
 创建卷时会读取这个值,将来通过卷创建虚拟机时要用到.
 
 ####20 retype
 azure没有相关的接口来更改卷的属性,不实现.
->>>>>>> 022a221... 1, Fix get_info and boot with blok_device_mapping

@@ -715,7 +715,7 @@ class AzureDriver(driver.ComputeDriver):
     def _cleanup_instance(self, instance):
         """for all cleanup methods, if resources were not found, just log
 
-        in warn, no raise, just cleanup in silenct mode.
+        in warn, no raise, just cleanup in silent mode.
         """
         # 1 clean os disk vhd
         os_blob_name = self._get_blob_name(instance.uuid)
