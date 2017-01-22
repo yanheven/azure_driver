@@ -426,7 +426,8 @@ class AzureDriver(driver.VolumeDriver):
 
         # check size of new create volume with source volume, can't resize
         # blob in azure.
-        image_size = image_meta['size'] * 1.0 / units.Gi
+        image_size = image_meta['size'] / units.Gi if \
+            image_meta['size'] > units.Gi else 1
         if volume['size'] != image_size:
             LOG.warning(_LW("Created Volume from Image: %(blob_name)s in Azure"
                             " can't be resized, use Image size "
