@@ -20,6 +20,7 @@ import six
 from azure.common import AzureMissingResourceHttpError
 from cinder import exception
 from cinder.i18n import _, _LE, _LI, _LW
+from cinder.image import image_utils
 from cinder.volume import driver
 from cinder.volume.drivers.azure.adapter import Azure
 from cinder.volume.drivers.azure import vhd_utils as azutils
@@ -386,7 +387,7 @@ class AzureDriver(driver.VolumeDriver):
         if not os_type:
             message = (_("Create Volume from Image %(image_id)s in Azure"
                          " failed. reason: image miss os_type property.")
-                       % dict(snapshop=image_meta['id']))
+                       % dict(image_id=image_meta['id']))
             LOG.exception(message)
             raise exception.VolumeBackendAPIException(data=message)
         image_blob = IMAGE_PREFIX + '-' + image_meta['id']
@@ -426,20 +427,22 @@ class AzureDriver(driver.VolumeDriver):
 
         # check size of new create volume with source volume, can't resize
         # blob in azure.
-        image_size = image_meta['size'] / units.Gi if \
-            image_meta['size'] > units.Gi else 1
-        if volume['size'] != image_size:
-            LOG.warning(_LW("Created Volume from Image: %(blob_name)s in Azure"
-                            " can't be resized, use Image size "
-                            "%(image_size)s GB for new Volume."),
-                        dict(blob_name=blob_name,
-                             image_size=image_size))
-            volume.update(dict(size=image_size))
-            volume.save()
+        image_size = image_meta['properties'].get('azure_image_size_gb')
+        if not image_size:
+            message = (_("Create Volume from Image %(image_id)s in Azure"
+                         " failed. reason: image miss azure_image_size_gb"
+                         " property.")
+                       % dict(image_id=image_meta['id']))
+            LOG.exception(message)
+            raise exception.VolumeBackendAPIException(data=message)
 
         metadata = volume['metadata']
         metadata['os_type'] = os_type
-        return {'metadata': metadata}, True
+        return dict(size=image_size, metadata=metadata), True
+
+    def copy_image_to_volume(self, context, volume, image_service, image_id):
+        """Nothing need to do since we copy image to volume in clone_image."""
+        pass
 
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
         """Copy the volume to the specified image.
@@ -482,3 +485,23 @@ class AzureDriver(driver.VolumeDriver):
 
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
         timer.start(interval=0.5).wait()
+        os_type = None
+        try:
+            os_type = volume.metadata['os_type']
+        except Exception:
+            # if metadata has no os_type attribute, ignore.
+            pass
+
+        # create a empty file to glance
+        with image_utils.temporary_file() as tmp:
+            image_utils.upload_volume(context,
+                                      image_service,
+                                      image_meta,
+                                      tmp)
+
+        image_meta['disk_format'] = 'vhd'
+        image_meta['properties'] = {'os_type': os_type,
+                                    'azure_image_size_gb':
+                                        volume.size
+                                    }
+        image_service.update(context, image_meta['id'], image_meta)

@@ -3,7 +3,6 @@ import ddt
 import mock
 from oslo_config import cfg
 from oslo_service import loopingcall
-from oslo_utils import units
 
 from cinder import db
 from cinder import exception
@@ -60,7 +59,7 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
             name='snap_name',
             id='snap_id',
             volume_name='vol_name',
-            properties=dict(os_type='linux'),
+            properties=dict(os_type='linux', azure_image_size_gb=2),
             metadata=dict(azure_snapshot_id='snap_id'))
         self.stubs.Set(loopingcall, 'FixedIntervalLoopingCall',
                        lambda a: FakeLoopingCall(a))
@@ -263,16 +262,15 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
                        '_check_exist')
     def test_create_volume_from_image(self, mo_exit):
         mo_exit.return_value = True
-        size = 1
-        self.fake_snap['size'] = size * units.Gi
         self.fake_vol.size = 2
         self.fake_vol.update = mock.Mock()
         self.fake_vol.save = mock.Mock()
-        self.driver.clone_image(self.context, self.fake_vol, '',
-                                self.fake_snap, '')
-        self.fake_vol.update.assert_called_once_with(
-            dict(size=size))
-        self.fake_vol.save.assert_called_once()
+        ret = self.driver.clone_image(self.context, self.fake_vol, '',
+                                      self.fake_snap, '')
+        self.assertEqual(self.fake_snap['properties']['azure_image_size_gb'],
+                         ret[0]['size'])
+        self.assertEqual(self.fake_snap['properties']['os_type'],
+                         ret[0]['metadata']['os_type'])
 
     @mock.patch.object(cinder.volume.drivers.azure.driver.AzureDriver,
                        '_check_exist')
@@ -284,12 +282,15 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
             self.driver.copy_volume_to_image,
             self.context, self.fake_vol, '', self.fake_snap)
 
+    @mock.patch('cinder.image.image_utils.upload_volume')
     @mock.patch.object(cinder.volume.drivers.azure.driver.AzureDriver,
                        '_check_exist')
-    def test_copy_volume_to_image(self, mo_exit):
+    def test_copy_volume_to_image(self, mo_upload, mo_exit):
         mo_exit.return_value = True
         self.driver._copy_blob = mock.Mock()
         self.fake_vol.size = 2
-        self.driver.copy_volume_to_image(self.context, self.fake_vol, '',
+        self.driver.copy_volume_to_image(self.context,
+                                         self.fake_vol,
+                                         mock.Mock(),
                                          self.fake_snap)
         self.driver._copy_blob.assert_called()

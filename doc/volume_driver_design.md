@@ -64,7 +64,8 @@ Azure api: 无
 ####16 copy_volume_to_image
 Azure api: Copy Blob  
 实现细节: 直接把volume所在的blob进行复制到image blob, 命名规则按images命名规则来.
-复制卷到镜像,不能指定镜像格式等属性,只能与卷完全一样.
+复制卷到镜像,不能指定镜像格式等属性,只能与卷完全一样.读取卷的"os_type"信息和大小写入到
+镜像的"azure_image_size_gb"属性里.
 
 ####17 copy_image_to_volume
 Azure api: Copy Blob  
@@ -79,7 +80,8 @@ Azure api: Copy Blob
 实现细节: 镜像提前上传到azure上,名为images的container里面,命名规则为"image-{image_id}.vhd",
 
 创建卷时直接从镜像的blob复制一个新的blob,大小不能改变.在openstack里面的镜像要添加os_type到其property里面,
-创建卷时会读取这个值,将来通过卷创建虚拟机时要用到.
+创建卷时会读取这个值,将来通过卷创建虚拟机时要用到.还有"azure_image_size_gb",在openstac创建空镜像时要填写在azuer上面映射
+镜像的大小.
 
 ####20 retype
 azure没有相关的接口来更改卷的属性,不实现.

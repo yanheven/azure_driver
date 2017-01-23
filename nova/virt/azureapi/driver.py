@@ -914,8 +914,7 @@ class AzureDriver(driver.ComputeDriver):
         data_disk = dict(lun=new_lun,
                          name=data['vhd_name'],
                          vhd=dict(uri=data['vhd_uri']),
-                         create_option='attach',
-                         disk_size_gb=data['vhd_size_gb'])
+                         create_option='attach')
         data_disks.append(data_disk)
         self._create_update_instance(instance, vm)
         LOG.info(_LI("Attach Volume to Instance in Azure finish"),
