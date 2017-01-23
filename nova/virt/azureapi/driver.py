@@ -482,8 +482,17 @@ class AzureDriver(driver.ComputeDriver):
             device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
             uri = device_mapping[0]['connection_info']['data']['vhd_uri']
+            volume_size = \
+                device_mapping[0]['connection_info']['data']['vhd_size_gb']
             os_type = \
                 device_mapping[0]['connection_info']['data']['os_type']
+            if not os_type:
+                ex = nova_ex.InvalidVolume(
+                    reason='Volume must have os_type attribute when boot from'
+                           ' it!')
+                msg = six.text_type(ex)
+                LOG.exception(msg)
+                raise ex
             disk_size_gb = instance.flavor.root_gb
             storage_profile = {
                 'os_disk': {
@@ -491,10 +500,13 @@ class AzureDriver(driver.ComputeDriver):
                     'caching': 'None',
                     'create_option': 'attach',
                     'vhd': {'uri': uri},
-                    'os_type': os_type,
-                    'disk_size_gb': disk_size_gb
+                    'os_type': os_type
                 }
             }
+            # azure don't allow reduce size.
+            if disk_size_gb > volume_size:
+                storage_profile['disk_size_gb'] = disk_size_gb
+
         else:
             LOG.debug("case2/3/4 boot from image.")
             image = self._image_api.get(context, image_meta.id)
