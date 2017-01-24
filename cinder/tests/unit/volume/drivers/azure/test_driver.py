@@ -6,6 +6,7 @@ from oslo_service import loopingcall
 
 from cinder import db
 from cinder import exception
+from cinder.objects.volume import MetadataObject
 from cinder.tests.unit import test_volume
 from cinder.volume.drivers.azure import driver
 from cinder.volume.drivers.azure.driver import AzureMissingResourceHttpError
@@ -32,6 +33,12 @@ class FakeObj(object):
     def __getitem__(self, name):
         return getattr(self, name)
 
+    def get(self, name, default):
+        value = getattr(self, name)
+        if not value:
+            return default
+        return value
+
     def __setitem__(self, name, value):
         setattr(self, name, value)
 
@@ -50,11 +57,14 @@ class AzureVolumeDriverTestCase(test_volume.DriverTestCase):
 
         self.driver = driver.AzureDriver(configuration=self.configuration,
                                          db=db)
+        metadata_obj = MetadataObject()
+        metadata_obj['os_type'] = 'fake_type'
         self.fake_vol = FakeObj()
         self.fake_vol.name = 'vol_name'
         self.fake_vol.id = 'vol_id'
         self.fake_vol.size = 1
         self.fake_vol.metadata = dict(os_type='fake_type')
+        self.fake_vol.volume_metadata = [MetadataObject()]
         self.fake_snap = dict(
             name='snap_name',
             id='snap_id',
