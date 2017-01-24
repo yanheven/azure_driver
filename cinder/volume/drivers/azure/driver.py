@@ -218,7 +218,9 @@ class AzureDriver(driver.VolumeDriver):
         blob_name = self._get_blob_name(volume.name)
         vhd_uri = self.blob.make_blob_url(
             self.configuration.azure_storage_container_name, blob_name)
-        os_type = volume.metadata.get('os_type')
+        metadata = volume.get('volume_metadata', [])
+        metadata_dict = {item['key']: item['value'] for item in metadata}
+        os_type = metadata_dict.get('os_type')
         connection_info = {
             'driver_volume_type': 'local',
             'data': {'volume_name': volume.name,
@@ -431,14 +433,15 @@ class AzureDriver(driver.VolumeDriver):
             LOG.exception(message)
             raise exception.VolumeBackendAPIException(data=message)
 
-        metadata = volume['metadata']
-        metadata['os_type'] = os_type
+        metadata = volume.get('volume_metadata', [])
+        metadata_dict = {item['key']: item['value'] for item in metadata}
+        metadata_dict['os_type'] = os_type
         LOG.info(_LI("Created Volume: %(blob_name)s from Image in Azure"
                      " can't be resized, use size of Image"
                      " %(image_size)s GB for new Volume."),
                  dict(blob_name=blob_name,
                       image_size=image_size))
-        return dict(size=image_size, metadata=metadata), True
+        return dict(size=image_size, metadata=metadata_dict), True
 
     def copy_image_to_volume(self, context, volume, image_service, image_id):
         """Nothing need to do since we copy image to volume in clone_image."""
@@ -485,12 +488,9 @@ class AzureDriver(driver.VolumeDriver):
 
         timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
         timer.start(interval=0.5).wait()
-        os_type = None
-        try:
-            os_type = volume.metadata['os_type']
-        except Exception:
-            # if metadata has no os_type attribute, ignore.
-            pass
+        metadata = volume.get('volume_metadata', [])
+        metadata_dict = {item['key']: item['value'] for item in metadata}
+        os_type = metadata_dict.get('os_type')
 
         # create a empty file to glance
         with image_utils.temporary_file() as tmp:
