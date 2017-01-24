@@ -587,10 +587,11 @@ class AzureDriver(driver.ComputeDriver):
                 # case3 boot from customized images
                 if 'uri' in image_reference:
                     LOG.debug("case3 boot from customized images.")
-                    storage_profile['image'] = {
+                    storage_profile['os_disk']['image'] = {
                         'uri': image_reference['uri']
                     }
-                    storage_profile['os_type'] = image_reference['os_type']
+                    storage_profile['os_disk']['os_type'] = \
+                        image_reference['os_type']
                 # case4 boot from azure marketplace images
                 else:
                     LOG.debug("case4 boot from marketplace images.")
