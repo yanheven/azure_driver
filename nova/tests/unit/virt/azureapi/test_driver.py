@@ -508,6 +508,97 @@ class AzureDriverTestCase(test.NoDBTestCase):
         self.assertEqual(1, mock_image_mapping.call_count)
         mock_image_mapping.assert_called()
 
+    def test_prepare_storage_profile_from_volume_invalid_volume(self):
+        self.stubs.Set(loopingcall, 'FixedIntervalLoopingCall',
+                       lambda a: FakeLoopingCall(a))
+        # boot from volume
+        image_ref = self.fake_instance['image_ref']
+        self.fake_instance['image_ref'] = None
+        bdm = {
+            'block_device_mapping':
+                [
+                    {
+                        'connection_info':
+                            {
+                                u'driver_volume_type': u'local',
+                                'connector':
+                                    {
+                                        'platform': 'azure',
+                                        'host': 'ubuntu',
+                                        'ip': '162.3.140.132'
+                                    },
+                                'serial':
+                                    u'7d1debb1-6638-4fd0-bfba-a2dfeb2c5036',
+                                u'data':
+                                    {
+                                        u'vhd_name':
+                                            u'volume-7d1debb1dfeb2c5036',
+                                        u'device_path': None,
+                                        u'vhd_size_gb': 1,
+                                        u'vhd_uri': u'volume-7d1b2c5036.vhd',
+                                        u'volume_id': u'7d136',
+                                        u'os_type': None,
+                                    }
+                            },
+                        'mount_device': u'/dev/sda',
+                        'delete_on_termination': False
+                    }
+                ],
+            'root_device_name': u'/dev/sda'
+        }
+        self.assertRaises(
+            nova_ex.InvalidVolume,
+            self.drvr._prepare_storage_profile,
+            *(self.context, '', self.fake_instance, bdm))
+        self.fake_instance['image_ref'] = image_ref
+
+    def test_prepare_storage_profile_from_volume(self):
+        self.stubs.Set(loopingcall, 'FixedIntervalLoopingCall',
+                       lambda a: FakeLoopingCall(a))
+        # boot from volume
+        image_ref = self.fake_instance['image_ref']
+        self.fake_instance['image_ref'] = None
+        os_type = 'linux'
+        self.fake_instance.flavor.root_gb = 10
+        bdm = {
+            'block_device_mapping':
+                [
+                    {
+                        'connection_info':
+                            {
+                                u'driver_volume_type': u'local',
+                                'connector':
+                                    {
+                                        'platform': 'azure',
+                                        'host': 'ubuntu',
+                                        'ip': '162.3.140.132'
+                                    },
+                                'serial':
+                                    u'7d1debb1-6638-4fd0-bfba-a2dfeb2c5036',
+                                u'data':
+                                    {
+                                        u'vhd_name':
+                                            u'volume-7d1debb1dfeb2c5036',
+                                        u'device_path': None,
+                                        u'vhd_size_gb': 1,
+                                        u'vhd_uri': u'volume-7d1b2c5036.vhd',
+                                        u'volume_id': u'7d136',
+                                        u'os_type': os_type,
+                                    }
+                            },
+                        'mount_device': u'/dev/sda',
+                        'delete_on_termination': False
+                    }
+                ],
+            'root_device_name': u'/dev/sda'
+        }
+        storage_profile = self.drvr._prepare_storage_profile(
+            self.context, '', self.fake_instance, bdm)
+        self.assertEqual(os_type, storage_profile['os_disk']['os_type'])
+        self.assertEqual(self.fake_instance.flavor.root_gb,
+                         storage_profile['os_disk']['disk_size_gb'])
+        self.fake_instance['image_ref'] = image_ref
+
     @mock.patch.object(AzureDriver, '_check_password')
     def test_spawn_invalied_password(self, mo_pass):
         # invalid pass

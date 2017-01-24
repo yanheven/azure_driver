@@ -498,7 +498,6 @@ class AzureDriver(driver.ComputeDriver):
                 msg = six.text_type(ex)
                 LOG.exception(msg)
                 raise ex
-            disk_size_gb = instance.flavor.root_gb
             storage_profile = {
                 'os_disk': {
                     'name': instance.uuid,
@@ -508,9 +507,10 @@ class AzureDriver(driver.ComputeDriver):
                     'os_type': os_type
                 }
             }
+            disk_size_gb = instance.flavor.root_gb
             # azure don't allow reduce size.
             if disk_size_gb > volume_size:
-                storage_profile['disk_size_gb'] = disk_size_gb
+                storage_profile['os_disk']['disk_size_gb'] = disk_size_gb
 
         else:
             LOG.debug("case2/3/4 boot from image.")

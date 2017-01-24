@@ -218,12 +218,7 @@ class AzureDriver(driver.VolumeDriver):
         blob_name = self._get_blob_name(volume.name)
         vhd_uri = self.blob.make_blob_url(
             self.configuration.azure_storage_container_name, blob_name)
-        os_type = None
-        try:
-            os_type = volume.metadata['os_type']
-        except Exception:
-            # if metadata has no os_type attribute, ignore.
-            pass
+        os_type = volume.metadata.get('os_type')
         connection_info = {
             'driver_volume_type': 'local',
             'data': {'volume_name': volume.name,
