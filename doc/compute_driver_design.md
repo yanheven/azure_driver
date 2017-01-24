@@ -24,7 +24,8 @@ Azure api: Create or update a VM
 
 - flavor: 在openstack外创建azure有而原来openstack没有的flavor, 然后在配置文件里写入openstack flavor与azure的映射关系.azure的hardware profile的vm_size,比如"Standard_DS1".
 - image: 镜像两边分别有各自的,然后在配置文件里配置对应关系,创建时用户选用openstack这边的image id,实际创建时通过映射关系找到azure上对应的ID. 
-- boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.
+- boot from volume: 只能使用azure上有的volume,然后创建VM时直接指定这个VHD作为系统盘.磁盘大小比较卷和flavor,如果flavor比卷实际大,就在azure创建虚拟机时带上disk_size_gb参数对磁盘进行扩展,
+    另外,删除虚拟机时,不会删除卷.
 - key-name: 把相应的keypair的公钥传入到新创建VM.
 - password: 支持创建时指定管理员密码, azure对应位置:os_profile'里面的'admin_password'.
 - network: 在配置文件里配置好有几个网络,几个子网,创建VM时指定.这些信息只在azure处有,openstack处没有对应的,有个潜在的问题是GUI处显示VM信息时关于网络的超链接就有问题, azure对应位置'network_profile':'network_interfaces':'id'.

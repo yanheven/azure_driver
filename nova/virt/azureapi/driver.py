@@ -481,15 +481,20 @@ class AzureDriver(driver.ComputeDriver):
             LOG.debug("case1 boot from volume.")
             device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
-            uri = device_mapping[0]['connection_info']['data']['vhd_uri']
-            volume_size = \
-                device_mapping[0]['connection_info']['data']['vhd_size_gb']
-            os_type = \
-                device_mapping[0]['connection_info']['data']['os_type']
-            if not os_type:
+            root_device_name = \
+                driver.block_device_info_get_root(block_device_info)
+            os_type = uri = volume_size = None
+            for disk in device_mapping:
+                connection_info = disk['connection_info']
+                if root_device_name == disk['mount_device']:
+                    uri = connection_info['data']['vhd_uri']
+                    volume_size = connection_info['data']['vhd_size_gb']
+                    os_type = connection_info['data']['os_type']
+                    break
+            if not (os_type and uri and volume_size):
                 ex = nova_ex.InvalidVolume(
-                    reason='Volume must have os_type attribute when boot from'
-                           ' it!')
+                    reason='Volume must have os_type/uri/volume_size attribute'
+                           ' when boot from it!')
                 msg = six.text_type(ex)
                 LOG.exception(msg)
                 raise ex
@@ -602,7 +607,8 @@ class AzureDriver(driver.ComputeDriver):
             msg = "Block device information present: %s" % block_device_info
             LOG.debug(msg, instance=instance)
 
-            root_device_name = block_device_info.get('root_device_name')
+            root_device_name = \
+                driver.block_device_info_get_root(block_device_info)
             for disk in block_device_mapping:
                 connection_info = disk['connection_info']
                 # if non root device, do attach. root device will automatic

@@ -438,6 +438,11 @@ class AzureDriver(driver.VolumeDriver):
 
         metadata = volume['metadata']
         metadata['os_type'] = os_type
+        LOG.info(_LI("Created Volume: %(blob_name)s from Image in Azure"
+                     " can't be resized, use size of Image"
+                     " %(image_size)s GB for new Volume."),
+                 dict(blob_name=blob_name,
+                      image_size=image_size))
         return dict(size=image_size, metadata=metadata), True
 
     def copy_image_to_volume(self, context, volume, image_service, image_id):
