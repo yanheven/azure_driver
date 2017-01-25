@@ -392,7 +392,7 @@ class AzureDriverTestCase(test.NoDBTestCase):
     def test_prepare_os_profile_without_image_reference(self):
         os = self.drvr._prepare_os_profile(
             self.fake_instance,
-            dict(os_disk=dict(os_type='attach')),
+            dict(os_disk=dict(create_option='attach')),
             None)
         self.assertIsNone(os)
 

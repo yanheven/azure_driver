@@ -411,7 +411,7 @@ class AzureDriver(driver.ComputeDriver):
 
         # 1 from volume, field "image_reference" would be empty.
         if 'image_reference' not in storage_profile and \
-                'attach' == storage_profile['os_disk']['os_type']:
+                'attach' == storage_profile['os_disk']['create_option']:
             return None
 
         os_type = None
