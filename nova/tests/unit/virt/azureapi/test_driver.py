@@ -390,7 +390,10 @@ class AzureDriverTestCase(test.NoDBTestCase):
                           flavor)
 
     def test_prepare_os_profile_without_image_reference(self):
-        os = self.drvr._prepare_os_profile(self.fake_instance, dict(), None)
+        os = self.drvr._prepare_os_profile(
+            self.fake_instance,
+            dict(os_disk=dict(os_type='attach')),
+            None)
         self.assertIsNone(os)
 
     def test_prepare_os_profile_linux(self):
@@ -447,10 +450,9 @@ class AzureDriverTestCase(test.NoDBTestCase):
         vm = self.drvr._create_vm_parameters('', '', '', 'os_profile')
         self.assertIn('os_profile', vm)
 
-    @mock.patch.object(AzureDriver, '_copy_blob')
     @mock.patch.object(AzureDriver, '_get_image_from_mapping')
     def test_prepare_storage_profile_from_exported_image(
-            self, mock_image_mapping, mock_copy_blob):
+            self, mock_image_mapping):
         self.stubs.Set(loopingcall, 'FixedIntervalLoopingCall',
                        lambda a: FakeLoopingCall(a))
         image_meta = FakeObj()
@@ -469,9 +471,7 @@ class AzureDriverTestCase(test.NoDBTestCase):
             self.context, image_meta, self.fake_instance, None)
         blob.properties.copy.status = 'success'
         self.assertIn('os_type', storage_profile['os_disk'])
-        mock_copy_blob.assert_called()
         self.assertEqual(0, mock_image_mapping.call_count)
-        self.assertEqual(1, mock_copy_blob.call_count)
 
     @mock.patch.object(AzureDriver, '_copy_blob')
     @mock.patch.object(AzureDriver, '_get_image_from_mapping')

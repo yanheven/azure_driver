@@ -408,25 +408,33 @@ class AzureDriver(driver.ComputeDriver):
         return vm_size
 
     def _prepare_os_profile(self, instance, storage_profile, admin_password):
-        # 2 scenarios of os profile: from image and from blob/volume
 
-        # from blob/volume, field "image_reference" would be empty.
-        if 'image_reference' not in storage_profile:
+        # 1 from volume, field "image_reference" would be empty.
+        if 'image_reference' not in storage_profile and \
+                'attach' == storage_profile['os_disk']['os_type']:
             return None
 
-        # from azure marketplace image.
+        os_type = None
+        # 2 from customized image/snapshot
+        if 'image_reference' not in storage_profile and \
+                'fromImage' == storage_profile['os_disk']['create_option']:
+            os_type = storage_profile['os_disk']['os_type']
+
+        # 3 from azure marketplace image
+        elif 'image_reference' in storage_profile:
+            image_offer = storage_profile['image_reference']['offer']
+            if image_offer in LINUX_OFFER:
+                os_type = LINUX_OS
+            elif image_offer in WINDOWS_OFFER:
+                os_type = WINDOWS_OS
+            else:
+                ex = exception.OSTypeNotFound(os_type=image_offer)
+                msg = six.text_type(ex)
+                LOG.error(msg)
+                raise ex
+
         os_profile = dict(computer_name=instance.hostname,
                           admin_username=USER_NAME)
-        image_offer = storage_profile['image_reference']['offer']
-        if image_offer in LINUX_OFFER:
-            os_type = LINUX_OS
-        elif image_offer in WINDOWS_OFFER:
-            os_type = WINDOWS_OS
-        else:
-            ex = exception.OSTypeNotFound(os_type=image_offer)
-            msg = six.text_type(ex)
-            LOG.error(msg)
-            raise ex
 
         if os_type == LINUX_OS:
             key_data = instance.get('key_data')
@@ -517,38 +525,15 @@ class AzureDriver(driver.ComputeDriver):
             image = self._image_api.get(context, image_meta.id)
             image_properties = image.get('properties', None)
 
-            # case2 boot from azure export images.
+            # case2 boot from azure export images/snapshot.
             if image_properties and 'azure_type' in image_properties:
                 # check image properties for azure export image
                 if image_properties['azure_type'] == AZURE \
                         and 'azure_uri' in image_properties \
                         and 'azure_os_type' in image_properties:
-                    LOG.debug("case2 boot from export images.")
+                    LOG.debug("case2 boot from export images/snapshot.")
                     disk_name = self._get_blob_name(instance.uuid)
-                    uri = image['properties']['azure_uri']
-
-                    # copy image diskt to new disk for instance.
-                    self._copy_blob(VHDS_CONTAINER, disk_name, uri)
-
-                    def _wait_for_copy():
-                        """Called at an copy until finish."""
-                        copy = self.blob.get_blob_properties(
-                            VHDS_CONTAINER, disk_name)
-                        state = copy.properties.copy.status
-                        if state == 'success':
-                            LOG.info(_LI("Copied image disk to new blob: %s in"
-                                         " Azure."), disk_name)
-                            raise loopingcall.LoopingCallDone()
-                        else:
-                            LOG.info(_LI(
-                                'copy os disk: %(disk)s in Azure Progress '
-                                '%(progress)s'),
-                                dict(disk=disk_name,
-                                     progress=copy.properties.copy.progress))
-
-                    timer = \
-                        loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
-                    timer.start(interval=0.5).wait()
+                    image_uri = image['properties']['azure_uri']
 
                     disk_uri = \
                         self.blob.make_blob_url(VHDS_CONTAINER, disk_name)
@@ -556,7 +541,8 @@ class AzureDriver(driver.ComputeDriver):
                         'os_disk': {
                             'name': instance.uuid,
                             'caching': 'None',
-                            'create_option': 'attach',
+                            'create_option': 'fromImage',
+                            'image': {'uri': image_uri},
                             'vhd': {'uri': disk_uri},
                             'os_type': image_properties['azure_os_type']
                         }
@@ -564,7 +550,8 @@ class AzureDriver(driver.ComputeDriver):
                 else:
                     ex = nova_ex.ImageUnacceptable(
                         image_id=image['id'],
-                        reason='Wrong parameters os Azure crated image!')
+                        reason='Wrong parameters on Azure exported'
+                               ' image/snapshot!')
                     msg = six.text_type(ex)
                     LOG.exception(msg)
                     raise ex

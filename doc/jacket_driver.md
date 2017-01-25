@@ -25,7 +25,7 @@ Azure image blob: {'os_type': 'linux(or windows...)', 'uri': 'image-21b87391-a91
 ||List details for servers|compute driver管理不了,查询DB
 ||Get server details|compute driver管理不了,查询DB
 ||Update server|compute driver管理不了,更新DB记录
-||Delete server|Azure api: Delete a VM  实现细节: azure接口文档没说明删除VM后,跟VM相关的资源是否删除,如果没删除,那按照openstack的做法,对网络接口,系统磁盘进行删除操作.
+||Delete server|Azure api: Delete a VM, Delete os disk, Delete NIC  实现细节: 对网络接口,系统磁盘进行删除操作.
 |Server metadata|Show server metadata|compute driver管理不了,查询DB
 ||Create or replace server metadata items|compute driver管理不了,查询DB
 ||Update server metadata items|compute driver管理不了,更新DB
@@ -40,7 +40,7 @@ Azure image blob: {'os_type': 'linux(or windows...)', 'uri': 'image-21b87391-a91
 ||Resize server|Azure api: Create or update a VM  实现细节: 选择新的flaovor后,通过这个接口对VM配置进行更新,azure的更新VM接口会要求重启VM.
 ||Confirm resized server|实现空操作接口即可
 ||Revert resized server|不支持
-||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的properties,带上{"azure_type": "azure", "azure_uri": "snapshot-(snapshot.uuid).vhd", "azure_of_type": instance.os_type},将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"snapshots"这个storage container里.
+||Create image|Azure api: Capture instance 实现细节：复制操作系统磁盘,Openstack会生成一个image记录,然后更新image里面的properties,带上{"azure_type": "azure", "azure_uri": "snapshot-(snapshot.uuid).vhd", "azure_obs_type": instance.os_type},将来创建VM时,选择了这个image,可以通过这个参数判断是否为这里生成的snapshot时对应的image,并且可以通过这个URI做为系统盘的来源.跟volume一样,存放在"snapshots"这个storage container里.
 |Flavors|List flavors|compute driver管理不了,查询DB
 ||List details for flavors|compute driver管理不了,查询DB
 ||Get flavor details|compute driver管理不了,查询DB
@@ -265,3 +265,10 @@ Azure: page blob:{'name': 'backup-17d95073-1ab7-4906-9518-6e09312f1655.vhd'}
 通常逻辑：直接进行删除操作，只在glance服务处删除，无法删除azure处的snapshot blob.现在思路是每次定期获取可用资源时进行清理操作.
 异常逻辑：将它放到定期任务执行。
 
+###局限说明
+|API|Constrains
+|:--|:--
+|从非azure镜像市场的镜像创建虚拟机|不支持修改登陆密码,目前只能在azure portal进行密码修改, 同样虚拟机创建后,也无法修改密码,密码为原镜像密码.
+|从镜像/卷/快照/创建卷|大小只能跟源镜像/卷/快照一样,不支持修改大小,创建过程会将新创建卷的大小修改为源大小,然后打日志说明不支持修改大小
+|删除快照|在azure上面的快照,只能本用户在一下次创建快照时才对上一次删除的快照进行移除,因为要调用到glance的接口,要有context,所以无法加入到定期任务中
+||
