@@ -191,27 +191,6 @@ class AzureDriverTestCase(test.NoDBTestCase):
         mock_precreate_network.assert_called()
 
     def test_init_host_register_riase(self):
-        self.drvr.resource.providers.register.side_effect = \
-            Exception
-        self.assertRaises(exception.ProviderRegisterFailure,
-                          self.drvr.init_host,
-                          'host')
-
-    def test_init_host_create_resourcegroup_riase(self):
-        self.drvr.resource.resource_groups.create_or_update.side_effect = \
-            Exception
-        self.assertRaises(exception.ResourceGroupCreateFailure,
-                          self.drvr.init_host,
-                          'host')
-
-    def test_init_host_create_storage_accounts_riase(self):
-        self.drvr.storage.storage_accounts.create.side_effect = \
-            Exception
-        self.assertRaises(exception.StorageAccountCreateFailure,
-                          self.drvr.init_host,
-                          'host')
-
-    def test_init_host_create_storage_container_riase(self):
         self.drvr.blob.create_container.side_effect = \
             Exception
         self.assertRaises(exception.StorageContainerCreateFailure,
@@ -388,13 +367,6 @@ class AzureDriverTestCase(test.NoDBTestCase):
         self.assertRaises(exception.FlavorAzureMappingNotFound,
                           self.drvr._get_size_from_flavor,
                           flavor)
-
-    def test_prepare_os_profile_without_image_reference(self):
-        os = self.drvr._prepare_os_profile(
-            self.fake_instance,
-            dict(os_disk=dict(create_option='attach')),
-            None)
-        self.assertIsNone(os)
 
     def test_prepare_os_profile_linux(self):
         self.fake_instance.save = mock.Mock()

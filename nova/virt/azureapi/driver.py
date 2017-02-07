@@ -11,6 +11,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import netaddr
 import re
 import six
 import time
@@ -32,7 +33,6 @@ from nova.virt.hardware import InstanceInfo
 from nova.volume import cinder
 from oslo_log import log as logging
 from oslo_service import loopingcall
-from oslo_utils import netutils
 
 
 CONF = conf.CONF
@@ -40,6 +40,7 @@ LOG = logging.getLogger(__name__)
 VOLUME_CONTAINER = 'volumes'
 SNAPSHOT_CONTAINER = 'snapshots'
 VHDS_CONTAINER = 'vhds'
+IMAGE_CONTAINER = 'images'
 AZURE = 'azure'
 USER_NAME = 'azureuser'
 VHD_EXT = 'vhd'
@@ -87,13 +88,38 @@ class AzureDriver(driver.ComputeDriver):
         """Get blob name from volume name"""
         return '{}.{}'.format(name, VHD_EXT)
 
+    def _is_valid_cidr(self, address):
+        """Verify that address represents a valid CIDR address.
+
+        :param address: Value to verify
+        :type address: string
+        :returns: bool
+
+        .. versionadded:: 3.8
+        """
+        try:
+            # Validate the correct CIDR Address
+            netaddr.IPNetwork(address)
+        except (TypeError, netaddr.AddrFormatError):
+            return False
+
+        # Prior validation partially verify /xx part
+        # Verify it here
+        ip_segment = address.split('/')
+
+        if (len(ip_segment) <= 1 or
+                ip_segment[1] == ''):
+            return False
+
+        return True
+
     def _precreate_network(self):
         """Pre Create Network info in Azure."""
         # check cidr format
         net_cidr = CONF.azure.vnet_cidr
         subnet_cidr = CONF.azure.vsubnet_cidr
-        if not (netutils.is_valid_cidr(net_cidr) and
-                netutils.is_valid_cidr(subnet_cidr)):
+        if not (self._is_valid_cidr(net_cidr) and
+                self._is_valid_cidr(subnet_cidr)):
             msg = 'Invalid network: %(net_cidr)s/subnet: %(subnet_cidr)s' \
                   ' CIDR' % dict(net_cidr=net_cidr, subnet_cidr=subnet_cidr)
             LOG.error(msg)
@@ -170,51 +196,12 @@ class AzureDriver(driver.ComputeDriver):
         exist needed, and no roll back needed, as anyway we need to create
         these resources.
         """
-        try:
-            self.resource.providers.register('Microsoft.Network')
-            LOG.info(_LI("Register Microsoft.Network"))
-            self.resource.providers.register('Microsoft.Compute')
-            LOG.info(_LI("Register Microsoft.Compute"))
-            self.resource.providers.register('Microsoft.Storage')
-            LOG.info(_LI("Register Microsoft.Storage"))
-        except Exception as e:
-            msg = six.text_type(e)
-            ex = exception.ProviderRegisterFailure(reason=msg)
-            LOG.exception(msg)
-            raise ex
 
         try:
-            self.resource.resource_groups.create_or_update(
-                CONF.azure.resource_group, {'location': CONF.azure.location})
-            LOG.info(_LI("Create/Update Resource Group"))
-        except Exception as e:
-            msg = six.text_type(e)
-            ex = exception.ResourceGroupCreateFailure(reason=msg)
-            LOG.exception(msg)
-            raise ex
-
-        try:
-            storage_async_operation = self.storage.storage_accounts.create(
-                CONF.azure.resource_group,
-                CONF.azure.storage_account,
-                {
-                    'sku': {'name': 'standard_lrs'},
-                    'kind': 'storage',
-                    'location': CONF.azure.location
-                }
-            )
-            storage_async_operation.wait(CONF.azure.async_timeout)
-            LOG.info(_LI("Create/Update Storage Account"))
-        except Exception as e:
-            msg = six.text_type(e)
-            ex = exception.StorageAccountCreateFailure(reason=msg)
-            LOG.exception(msg)
-            raise ex
-
-        try:
-            self.blob.create_container(SNAPSHOT_CONTAINER)
-            LOG.info(_LI("Create/Update Storage Container: %s"),
-                     SNAPSHOT_CONTAINER)
+            for i in (VOLUME_CONTAINER, SNAPSHOT_CONTAINER, VHDS_CONTAINER,
+                      IMAGE_CONTAINER):
+                self.blob.create_container(i)
+                LOG.info(_LI("Create/Update Storage Container: %s"), i)
         except Exception as e:
             msg = six.text_type(e)
             LOG.exception(msg)
@@ -409,18 +396,13 @@ class AzureDriver(driver.ComputeDriver):
 
     def _prepare_os_profile(self, instance, storage_profile, admin_password):
 
-        # 1 from volume, field "image_reference" would be empty.
-        if 'image_reference' not in storage_profile and \
-                'attach' == storage_profile['os_disk']['create_option']:
-            return None
-
         os_type = None
-        # 2 from customized image/snapshot
+        # 1 from volume, customized image or snapshot
         if 'image_reference' not in storage_profile and \
                 'fromImage' == storage_profile['os_disk']['create_option']:
             os_type = storage_profile['os_disk']['os_type']
 
-        # 3 from azure marketplace image
+        # 2 from azure marketplace image
         elif 'image_reference' in storage_profile:
             image_offer = storage_profile['image_reference']['offer']
             if image_offer in LINUX_OFFER:
@@ -506,11 +488,52 @@ class AzureDriver(driver.ComputeDriver):
                 msg = six.text_type(ex)
                 LOG.exception(msg)
                 raise ex
+
+            disk_name = self._get_blob_name(instance.uuid)
+
+            # copy volume to new disk as image for instance.
+            self._copy_blob(VOLUME_CONTAINER, disk_name, uri)
+
+            def _wait_for_copy():
+                """Called at an copy until finish."""
+                copy = self.blob.get_blob_properties(
+                    VOLUME_CONTAINER, disk_name)
+                state = copy.properties.copy.status
+                if state == 'success':
+                    LOG.info(_LI("Copied volume disk to new blob: %s in"
+                                 " Azure."), disk_name)
+                    raise loopingcall.LoopingCallDone()
+                else:
+                    LOG.info(_LI(
+                        'copy volume disk: %(disk)s in Azure Progress '
+                        '%(progress)s'),
+                        dict(disk=disk_name,
+                             progress=copy.properties.copy.progress))
+
+            timer = loopingcall.FixedIntervalLoopingCall(_wait_for_copy)
+            timer.start(interval=0.5).wait()
+
+            volume_blbo_name = uri.split('/')[-1]
+            try:
+                self._delete_blob(VOLUME_CONTAINER, volume_blbo_name)
+            except Exception as e:
+                LOG.exception(_LE("Unabled to delete volume blob"
+                                  " %(disk)s in Azure because %(reason)s"),
+                              dict(disk=volume_blbo_name,
+                                   reason=six.text_type(e)))
+                raise e
+            else:
+                LOG.info(_LI("Delete volume: %s blob in"
+                         " Azure"), volume_blbo_name)
+
+            image_uri = self.blob.make_blob_url(VOLUME_CONTAINER, disk_name)
+
             storage_profile = {
                 'os_disk': {
                     'name': instance.uuid,
                     'caching': 'None',
-                    'create_option': 'attach',
+                    'create_option': 'fromImage',
+                    'image': {'uri': image_uri},
                     'vhd': {'uri': uri},
                     'os_type': os_type
                 }
@@ -526,6 +549,7 @@ class AzureDriver(driver.ComputeDriver):
             image_properties = image.get('properties', None)
 
             # case2 boot from azure export images/snapshot.
+            # still can't work now, snapshot problem.
             if image_properties and 'azure_type' in image_properties:
                 # check image properties for azure export image
                 if image_properties['azure_type'] == AZURE \
@@ -636,6 +660,7 @@ class AzureDriver(driver.ComputeDriver):
                      instance=instance)
 
             self._attach_block_device(context, instance, block_device_info)
+            self._delete_boot_from_volume_tmp_blob(instance)
 
         except Exception as e:
             LOG.exception(_LE("Instance Spawn failed, start cleanup instance"),
@@ -646,10 +671,26 @@ class AzureDriver(driver.ComputeDriver):
             except Exception:
                 LOG.exception(_LE("clean up in azure for failed."),
                               instance=instance)
+            self._delete_boot_from_volume_tmp_blob(instance)
+
             # raise spawn exception
             msg = six.text_type(e)
             LOG.exception(msg)
             raise e
+
+    def _delete_boot_from_volume_tmp_blob(self, instance):
+        # boot from volume, delete tmp blob after spawn.
+        if not instance.get('image_ref'):
+            try:
+                self._delete_blob(VOLUME_CONTAINER, instance.uuid)
+            except Exception as e:
+                LOG.warning(_LW("Unabled to delete volume tmp blob"
+                                " %(disk)s in Azure because %(reason)s"),
+                            dict(disk=instance.uuid,
+                                 reason=six.text_type(e)))
+            else:
+                LOG.info(_LI("Delete volume tmp lv: %s blob in"
+                         " Azure"), instance.uuid)
 
     def _get_instance(self, instance_uuid):
         try:
@@ -726,7 +767,9 @@ class AzureDriver(driver.ComputeDriver):
         in warn, no raise, just cleanup in silent mode.
         """
         # 1 clean os disk vhd
-        os_blob_name = self._get_blob_name(instance.uuid)
+        # vm = self._get_instance(instance.uuid)
+        # os_blob_uri = vm.storage_profile.os_disk.vhd.uri
+        os_blob_name = instance.uuid
         try:
             self._delete_blob(VHDS_CONTAINER, os_blob_name)
             LOG.info(_LI("Delete instance's Volume"), instance=instance)

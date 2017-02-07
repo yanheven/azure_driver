@@ -12,17 +12,22 @@
 #    under the License.
 
 # keys from openstack image name, values from azure image marketplace or
-# customized image uri.
+# customized image uri. after assign here, if customized image, also need to
+# use glance image-update
+# command to add properties, glance image-update --property os_type=linux
+# --property azure_image_size_gb=30  f19e0acf-3a94-4711-9c6b-125c51327efc
 IMAGE_MAPPING = {
+    # 1 marketplace image
     'cirros-0.3.4-x86_64-uec': {
         'publisher': 'Canonical',
         'offer': 'UbuntuServer',
         'sku': '16.04.0-LTS',
         'version': 'latest'
     },
-    'cirros-0.3.4-x86_64-vhd': {
-        'uri': 'https://ops0storage0account.blob.core.windows.net/images/'
-               'a1e8409b-537b-4eb2-a9be-4e6c7d1f4686.vhd',
+    # 2 customized image
+    'cirros-0.3.4-x86_64-uec-kernel': {
+        'uri': 'https://throbbingscene1206.blob.core.windows.net/images/image-'
+               '5740e77c-d65e-40e6-9916-7c05ef37274a.vhd',
         # os_type could be linux or windows
         'os_type': 'linux',
     }

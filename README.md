@@ -36,7 +36,7 @@ location = westus
 resource_group = ops_resource_group
 storage_account = ops0storage0account
 subscription_id = 62257576-b9df-484a-b643-2df9ce9e7086
-username = xxxxxxxxxx@yanhevenoutlook.onmicrosoft.com
+username = test@yanhevenoutlook.onmicrosoft.com
 password = xxxxxxxxx
 vnet_name = ops_vnet
 vsubnet_id = none
@@ -53,7 +53,7 @@ $/usr/local/bin/nova-compute --config-file /etc/nova/nova-compute.conf & echo $!
 devstack, then stop c-vol screen.
 ```
 $cp -r cinder/volume/drivers/azure /opt/stack/cinder/cinder/volume/drivers/
-$pip install -r /opt/stack/cinder/cinder/volume/drivers/azure/requirements.txt
+    $pip install -r /opt/stack/cinder/cinder/volume/drivers/azure/requirements.txt
 
 $cp /etc/cinder/cinder.conf /etc/cinder/cinder-volume.conf
 $vi /etc/cinder/cinder-volume.conf
